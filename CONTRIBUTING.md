@@ -4,6 +4,19 @@ We are happy to accept pull requests and issues from any contributors. Please
 note that we try to maintain a consistent quality standard. For a quick overview
 please find some of the most important points below.
 
+## Branch Policy
+
+* **All external PRs must target the `devel` branch, not `master`.** PRs opened
+  against `master` by non-maintainers are automatically retargeted to `devel`.
+* `master` only receives changes that have passed the internal verification
+  flow (proprietary EDA tools: Questa, VCS, formal). Promotion from `devel`
+  to `master` is performed by a maintainer.
+* When a `devel` PR has been verified internally, a maintainer adds the
+  `verified-internal` label. A rolling `devel → master` promotion PR is
+  opened (or extended) automatically.
+* For urgent fixes that should bypass the staging step, note "needs
+  fast-track to master" in the PR description and ping a maintainer.
+
 ## Quick Overview
 
 * Keep a clean commit history. This means no merge commits, and no long series
@@ -19,6 +32,7 @@ please find some of the most important points below.
   separated by a slash. For example "hw/vendor: Add patch directory".
 * Create pull requests from a fork rather than making new branches in
   `github.com/pulp_platform/iDMA`.
+* Target PRs at `devel`, not `master` (see [Branch Policy](#branch-policy)).
 * Do not force push.
 * Do not attempt to commit code with a non-Solderpad license without discussing
   first.

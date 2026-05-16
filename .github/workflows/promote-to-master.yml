@@ -1,0 +1,81 @@
+# Copyright 2026 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
+# Label-driven promotion of verified `devel` changes to `master`.
+#
+# A maintainer applies the `verified-internal` label to a merged PR on
+# `devel` after the proprietary internal verification flow passes.
+# This workflow then opens (or appends to) a single rolling
+# `devel -> master` promotion PR. The maintainer reviews and merges
+# that promotion PR when ready.
+
+name: promote-to-master
+
+on:
+  pull_request:
+    types: [closed, labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Open or update the devel->master promotion PR
+    if: >
+      github.event.pull_request.merged == true
+      && github.event.pull_request.base.ref == 'devel'
+      && contains(github.event.pull_request.labels.*.name, 'verified-internal')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Open or append promotion PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const originalPR    = context.payload.pull_request.number;
+            const originalTitle = context.payload.pull_request.title;
+            const entry         = `- #${originalPR}: ${originalTitle}`;
+
+            // Look for an open rolling promotion PR.
+            const existing = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              base:  'master',
+              head:  `${context.repo.owner}:devel`,
+              state: 'open',
+            });
+
+            if (existing.data.length > 0) {
+              const promo = existing.data[0];
+              const body  = (promo.body || '') + '\n' + entry;
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                pull_number: promo.number,
+                body,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: promo.number,
+                body: `Now also includes #${originalPR}.`,
+              });
+              return;
+            }
+
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: 'Promote verified devel changes to master',
+              head:  'devel',
+              base:  'master',
+              body: [
+                'Auto-opened after a PR on `devel` was labeled `verified-internal`.',
+                '',
+                'Included PRs:',
+                entry,
+              ].join('\n'),
+            });
