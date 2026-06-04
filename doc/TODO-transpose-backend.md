@@ -12,9 +12,22 @@ No workarounds; every gap below is tracked, not silently accepted.
   `req.opt → opt_tf → w_dp_req` (legalizer) → transport seam. Regression clean.
   3-agent audit: **PROCEED** (no correctness defect, no workaround). Prototype RTL
   committed + tracked (target/rtl/.gitignore un-ignores the rw_axi trio).
-- **Step 2** ⏳ splice `idma_otf_transpose` into transport behind `EnableTranspose`.
-- **Step 3** ⏳ `strb_o → wstrb` AND into `mask_out` (idma_axi_write.sv).
-- **Step 4** ⏳ end-to-end single-tile transpose job + transpose model + compare_mem.
+- **Step 2** ✅ spliced `idma_otf_transpose` into `idma_transport_layer_rw_axi`
+  behind `EnableTranspose` (hardcoded 1 in the backend transport instance for the
+  prototype), with a runtime `transpose_en` bypass + beat↔per-lane handshake
+  adapter; engine added to Bender.yml. Regression `simple/medium/large` clean
+  (engine present, copies bypass it). Commit `0c095ae`.
+- **Step 3** (folded into Step 5) `strb_o → wstrb` AND into `mask_out`
+  (idma_axi_write.sv) — only needed for PARTIAL tiles; full single tiles have
+  `strb_o='1` so the existing `buffer_out_valid_i` gating suffices.
+- **Step 4** ⏳ end-to-end single-tile transpose verification. IN PROGRESS:
+  `launch_tf` extended with defaulted transpose params (idma_test.sv) — compiles,
+  regression clean. REMAINING: in the rw_axi TB module of `tb_idma_generated.sv`
+  (lines ~336-630; init_mem/compare_mem from `test/include/tb_tasks.svh`), add a
+  single-tile transpose job — `init_mem` a known NE×NE src tile, `drv.launch_tf`
+  with `transpose_en=1, transp_mode=0, tensor_m=tensor_n=StrbWidth,
+  length=StrbWidth²`, write the transpose golden into `model.mem[dst]`
+  (`out[c*NE+r]=in[r*NE+c]`), then `compare_mem`. Then 3-agent audit.
 - **Step 5+** ⏳ multi-tile via ND descriptor (NumDim=4 strides); partial-tile.
 - **Final** ⏳ port all generated-RTL edits back into the Mako templates.
 

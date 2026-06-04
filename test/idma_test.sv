@@ -687,7 +687,11 @@ package idma_test;
             input logic [2:0] dst_max_llen,
             input logic       src_reduce_len,
             input logic       dst_reduce_len,
-            input id_t        id
+            input id_t        id,
+            input logic       transpose_en = 1'b0,
+            input logic [1:0] transp_mode  = '0,
+            input logic [11:0] tensor_m    = '0,
+            input logic [11:0] tensor_n    = '0
         );
             idma.req.length                 <= #TA length;
             idma.req.src_addr               <= #TA src_addr;
@@ -702,10 +706,10 @@ package idma_test;
             idma.req.opt.beo.dst_max_llen   <= #TA dst_max_llen;
             idma.req.opt.beo.src_reduce_len <= #TA src_reduce_len;
             idma.req.opt.beo.dst_reduce_len <= #TA dst_reduce_len;
-            idma.req.opt.transpose_en       <= #TA 1'b0;
-            idma.req.opt.transp_mode        <= #TA '0;
-            idma.req.opt.tensor_m           <= #TA '0;
-            idma.req.opt.tensor_n           <= #TA '0;
+            idma.req.opt.transpose_en       <= #TA transpose_en;
+            idma.req.opt.transp_mode        <= #TA transp_mode;
+            idma.req.opt.tensor_m           <= #TA tensor_m;
+            idma.req.opt.tensor_n           <= #TA tensor_n;
             idma.req_valid                  <= #TA 1;
             cycle_start();
             while (idma.req_ready != 1) begin cycle_end(); cycle_start(); end
