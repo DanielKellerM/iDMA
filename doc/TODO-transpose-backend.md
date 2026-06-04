@@ -67,8 +67,13 @@ threshold (empirically NE−1) the write channel deadlocks. With runtime E, the
 synth-time requirement is `NumAxInFlight >= StrbWidth` (E=1 worst case). TB
 auto-sizes `NumAxInFlight = StrbWidth`; documented in routing-plan §4.2.
 
-REMAINING: B1 (idma.mk -t split_rtl + transpose_nd make target — commit for
-reproducibility) and templatize (final step).
+B1 RESOLVED for reproducibility: the idma.mk build-flow change (`-t split_rtl` on
+the compile.tcl rule + idma_sim_tb_idma_{otf_transpose,transpose_nd} targets) is
+committed on the `fix/rt-midend-choice-fifo-tests` branch (commit be94333) — it
+was dependency-locked there (de194023 also edits idma.mk). Implication: the routed
+transpose build flow now lives on that branch, so building transpose requires it
+applied/merged alongside `explore/transpose-engine`.
+REMAINING: templatize the generated-RTL edits into src/backend/tpl/*.tpl (final step).
 
 **(superseded — aligned multi-tile now works) earlier note:** the address plane —
 tiled strided source reads in (col-tile,row-tile,row) order + transposed-stride
