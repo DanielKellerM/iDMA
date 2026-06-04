@@ -167,6 +167,7 @@ sources:
       - test/future/idma_tb_per2axi.sv
       - test/future/TLToAXI4.v
       - test/midend/tb_idma_nd_midend.sv
+      - test/midend/tb_idma_nd_midend_b2b.sv
       - test/midend/tb_idma_rt_midend.sv
       # Level 2
       - test/future/idma_obi2axi_bridge.sv
@@ -180,3 +181,4 @@ sources:
       - target: all(idma_test, split_rtl)
         files:
           - test/tb_idma_transpose_nd.sv
+          - test/tb_idma_transpose_b2b.sv

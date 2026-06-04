@@ -235,10 +235,12 @@ module tb_idma_transpose_nd
 
     $display("[TPN] launching %0dx%0d EB=%0d transpose via ND midend (NE=%0d, %0dx%0d tiles)", M, N, EB, NE, YT, NT);
     nd_req_valid = 1'b1;
-    @(posedge clk);
-    while (!nd_req_ready) @(posedge clk);
-    @(posedge clk);
+    // Drop valid the cycle the accept (nd_req_ready) is seen — do NOT hold it
+    // one cycle past, or the midend starts a spurious re-walk of the request
+    // (burst_req_valid_o follows nd_req_valid_i), corrupting a following transfer.
+    do @(posedge clk); while (!nd_req_ready);
     nd_req_valid = 1'b0;
+    nd_req = '0;
 
     // wait for ND completion
     while (!(nd_rsp_valid && nd_rsp_ready)) @(posedge clk);
