@@ -364,6 +364,24 @@ idma_sim_tb_idma_transpose_nd: $(IDMA_VSIM_DIR)/compile.tcl
 	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=9   -gN=5  -gEB=4 tb_idma_transpose_nd -do "run -all; quit"
 	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=13  -gN=19 -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
 
+# Back-to-back regressions: the ND midend must reload each new transfer's base
+# address (it does, for a protocol-compliant producer that drops nd_req_valid on
+# accept). tb_idma_nd_midend_b2b checks the midend's burst-address sequence under
+# backpressure; tb_idma_transpose_b2b checks two end-to-end transposes to distinct
+# destinations.  Run with the Questa SEPP wrapper.
+.PHONY: idma_sim_tb_idma_nd_midend_b2b
+idma_sim_tb_idma_nd_midend_b2b: $(IDMA_VSIM_DIR)/compile.tcl
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -do "source compile.tcl; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc tb_idma_nd_midend_b2b -do "run -all; quit"
+
+.PHONY: idma_sim_tb_idma_transpose_b2b
+idma_sim_tb_idma_transpose_b2b: $(IDMA_VSIM_DIR)/compile.tcl
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -do "source compile.tcl; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=6  -gN=8 -gEB=1 tb_idma_transpose_b2b -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=8  -gN=8 -gEB=1 tb_idma_transpose_b2b -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=13 -gN=19 -gEB=1 tb_idma_transpose_b2b -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=5  -gN=5 -gEB=2 tb_idma_transpose_b2b -do "run -all; quit"
+
 idma_sim_clean:
 	rm -rf $(IDMA_OTF_TP_DIR)
 	rm -rf $(IDMA_VSIM_DIR)/compile.tcl
