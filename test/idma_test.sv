@@ -702,6 +702,10 @@ package idma_test;
             idma.req.opt.beo.dst_max_llen   <= #TA dst_max_llen;
             idma.req.opt.beo.src_reduce_len <= #TA src_reduce_len;
             idma.req.opt.beo.dst_reduce_len <= #TA dst_reduce_len;
+            idma.req.opt.transpose_en       <= #TA 1'b0;
+            idma.req.opt.transp_mode        <= #TA '0;
+            idma.req.opt.tensor_m           <= #TA '0;
+            idma.req.opt.tensor_n           <= #TA '0;
             idma.req_valid                  <= #TA 1;
             cycle_start();
             while (idma.req_ready != 1) begin cycle_end(); cycle_start(); end

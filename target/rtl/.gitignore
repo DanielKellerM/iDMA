@@ -2,3 +2,9 @@ Bender.yml
 include
 *.sv
 *.hjson
+
+# Track the rw_axi transpose-engine prototype (generated RTL hand-edited during
+# backend bring-up; will be re-derived from templates once verified).
+!idma_backend_rw_axi.sv
+!idma_legalizer_rw_axi.sv
+!idma_transport_layer_rw_axi.sv

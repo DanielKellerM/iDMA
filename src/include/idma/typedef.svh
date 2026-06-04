@@ -26,6 +26,10 @@
         idma_pkg::axi_options_t     src;                                 \
         idma_pkg::axi_options_t     dst;                                 \
         idma_pkg::backend_options_t beo;                                 \
+        logic                       transpose_en;                        \
+        logic [1:0]                 transp_mode;                         \
+        logic [11:0]                tensor_m;                            \
+        logic [11:0]                tensor_n;                            \
         logic                       last;                                \
     } options_t;
 `define IDMA_TYPEDEF_ERR_PAYLOAD_T(err_payload_t, axi_addr_t)            \
