@@ -46,9 +46,29 @@ reset), NOT absolute — transpose needs negative jumps. Formulas (aligned M=YT�
 N=NT·NE): src[N·E, N·E, NE·E−(M−1)·N·E]; dst[M·E, NE·E−(NE−1)·M·E, M·E−(YT−1)·NE·E].
 Commit 8fa7247.
 
-REMAINING: **edge tiles** (M or N not a multiple of NE) — need strb_o→wstrb edge
-masking (idma_axi_write mask_out) + read padding to tile boundaries + edge-aware
-strides. Plus B1 (idma.mk -t split_rtl uncommitted, reproducibility) and templatize.
+## UPDATE — edge tiles IMPLEMENTED + verified (M or N not a multiple of NE)
+`strb_o → wstrb` is now wired through the shared `idma_axi_write.sv` (new
+`mask_ext_i` ANDed into `mask_out`, new strobe-independent `w_beat_done_o` to
+retire all-padding beats) and the rw_axi transport (presence=all-ones, engine
+strobe shifted in parallel as `mask_ext_shifted`, engine retired on `w_beat_done`).
+KEY ADDRESS-PLANE FIX: `Aᵀ` uses a PADDED row pitch `MP·E = ceil(M/NE)·StrbWidth`
+(not `M·E`) — the engine drains one beat per output row and the write path can't
+coalesce a misaligned split beat, so every row must be StrbWidth-aligned. Source
+pitch stays `N·E` (misaligned reads coalesce in the pre-engine buffer). Verified
+NON-VACUOUSLY (data + padding-sentinel check; disabling the strobe clobbers the
+padding → test fails): int8 6×8/8×6/6×6/5×7/10×6/13×19, fp16 5×5/7×3, fp32 9×5,
+plus all aligned + copies + in-band single-tile. Negative control confirms the
+strobe is load-bearing. Commit pending.
+
+**GAP-4 discharged (liveness): `NumAxInFlight >= NE`.** The engine buffers a whole
+NE-beat tile before its first write; the backend holds a transaction slot per
+single-beat burst until B, so NE bursts sit read-done/write-pending. Below the
+threshold (empirically NE−1) the write channel deadlocks. With runtime E, the
+synth-time requirement is `NumAxInFlight >= StrbWidth` (E=1 worst case). TB
+auto-sizes `NumAxInFlight = StrbWidth`; documented in routing-plan §4.2.
+
+REMAINING: B1 (idma.mk -t split_rtl + transpose_nd make target — commit for
+reproducibility) and templatize (final step).
 
 **(superseded — aligned multi-tile now works) earlier note:** the address plane —
 tiled strided source reads in (col-tile,row-tile,row) order + transposed-stride

@@ -200,26 +200,36 @@ midend logic.
 
 Let `E` = element bytes, `NE = StrbWidth/E` (tile side in elements,
 = beat in elements), `SW = StrbWidth` (bytes/beat), `YT = ceil(M/NE)`,
-`NT = ceil(N/NE)`. Iteration order (outer→inner): `nt` (col-tile) → `rt`
-(row-tile) → `j` (row/beat within tile). Each 1D run = one tile-row = `NE`
-elements = `SW` bytes, contiguous on **both** src and dst.
+`NT = ceil(N/NE)`, and `MP = YT·NE` — the **padded** output row pitch (M rounded
+up to a tile/`SW` boundary; `MP = M` when `M % NE == 0`). Iteration order
+(outer→inner): `nt` (col-tile) → `rt` (row-tile) → `j` (row/beat within tile).
+Each 1D run = one tile-row = `NE` elements = `SW` bytes, contiguous on both src
+and dst.
 
-Source `A` is M×N row-major at `src`; transposed `Aᵀ` is N×M row-major at `dst`.
-For iteration `(nt, rt, j)`:
+Source `A` is M×N row-major at `src`; transposed `Aᵀ` is stored **N×MP**
+row-major at `dst` (real data in columns `[0, M)`, columns `[M, MP)` are padding).
+For iteration `(nt, rt, j)` the absolute addresses are:
 
 ```
-src_addr = src + j·(N·E)     + rt·(NE·N·E) + nt·(NE·E)     // reads A[rt·NE+j][nt·NE .. +NE)
-dst_addr = dst + j·(M·E)     + rt·(NE·E)   + nt·(NE·M·E)    // writes Aᵀ[nt·NE+j][rt·NE .. +NE)
+src_addr = src + (rt·NE + j)·(N·E) + nt·(NE·E)     // reads A[rt·NE+j][nt·NE .. +NE)
+dst_addr = dst + (nt·NE + j)·(MP·E) + rt·(NE·E)    // writes Aᵀ[nt·NE+j][rt·NE .. +NE)
 ```
 
-As an `idma_nd_req_t` (`typedef.svh:75-85`):
+> ⚠️ **The ND midend strides are INCREMENTAL deltas, not these absolute per-dim
+> steps.** `idma_nd_midend.sv:164-186` adds exactly **one** stride per burst —
+> `addr += d_req[stride_sel].strides`, where `stride_sel = popcount(rolled-over
+> dims)`. So a dimension's `*_strides` must encode *"undo the inner loops and step
+> the outer dim once"*, i.e. the delta from the last inner position to the next
+> outer position — not the absolute pitch. The table below is the delta form
+> (verified in `test/tb_idma_transpose_nd.sv`); an absolute-stride table would
+> corrupt a real driver.
 
-| Level | reps | `src_strides` | `dst_strides` |
+| Level | reps | `src_strides` (Δ) | `dst_strides` (Δ) |
 |------|------|---------------|---------------|
 | 1D burst | `length = NE·E (= SW B)` | contiguous | contiguous |
-| `d_req[0]` = j (row in tile) | `NE` | `N·E` | `M·E` |
-| `d_req[1]` = rt (row-tile) | `YT` | `NE·N·E` | `NE·E` |
-| `d_req[2]` = nt (col-tile) | `NT` | `NE·E` | `NE·M·E` |
+| `d_req[0]` = j (row in tile) | `NE` | `N·E` | `MP·E` |
+| `d_req[1]` = rt (row-tile) | `YT` | `N·E` | `NE·E − (NE−1)·MP·E` |
+| `d_req[2]` = nt (col-tile) | `NT` | `NE·E − (YT·NE−1)·N·E` | `MP·E − (YT−1)·NE·E` |
 
 ⇒ **NumDim = 4** (1D + 3 `d_req`). The driver computes this program from
 `(src, dst, M, N, E)`; no new midend RTL. Pairing is positional: the engine
@@ -227,29 +237,79 @@ fills with read beats `j=0..NE-1` of a tile, then drains output beats
 `j=0..NE-1` (columns); write iteration `j` consumes output beat `j`. `decouple_rw`
 lets the read machine run a tile ahead while the engine buffers (§5.2).
 
-### 4.3 `strb_o → wstrb` — the one load-bearing RTL change
+**Two asymmetries that the deltas encode (both load-bearing for edge tiles):**
 
-`wstrb` is today born **solely** from address-alignment masks in
-`src/backend/idma_axi_write.sv`: `w_first_mask = '1 << offset` (`:118`),
-`w_last_mask = '1 >> (StrbWidth - tailer)` (`:119`), combined into `mask_out`
-(`proc_out_mask_generator`, `:135-144`), then driven onto `write_req_o.w.strb`
-(`:197`) **and** used to pop the buffer `buffer_out_ready_o = mask_out` (`:174`).
-There is **no input port for an engine mask**.
+1. **dst uses the padded pitch `MP·E`, src uses the real pitch `N·E`.** The engine
+   drains exactly one beat per `Aᵀ` row and the write path has **no buffer after
+   the engine** to coalesce a *misaligned* (word-crossing, hence 2-beat) write. If
+   `M·E` is not a multiple of `SW` (i.e. `M % NE != 0`), an unpadded row pitch
+   makes every `Aᵀ` row start at a sub-word offset → the legalizer splits each
+   row into 2 beats → the engine retires its single beat after the first and the
+   second beat starves → **write-channel deadlock**. Padding the pitch to `MP·E`
+   keeps every row `SW`-aligned (single-beat). Reads need no such padding:
+   misaligned source reads coalesce in the dataflow buffer, which sits *before*
+   the engine (verified: e.g. `8×6 EB=1` has misaligned reads and passes).
 
-Change:
-1. Add an engine-strobe input to the write manager and **AND** it into `mask_out`:
-   `mask_out = (alignment masks) & engine_strb_q`. This is the single deciding
-   modification — without it, edge-tile padding cannot be dropped on writes.
-   Anchor `idma_axi_write.sv:135-144, 174, 197`.
-2. Shift `strb_o` by `w_dp_req_i.shift` **identically** to the data in the write
-   barrel shifter, so the mask stays byte-aligned to the destination address. The
-   transport layer already shifts `buffer_out`/`buffer_out_valid`/`buffer_out_ready`
-   (`idma_transport_layer_rw_axi.sv:210-213`); add a parallel shift of `strb_o`.
+2. **`d_req[2].src` rewinds by `YT·NE−1` rows, not `M−1`.** The read walks `NE`
+   rows per tile *including* the padding rows of the last row-tile (rows
+   `[M, YT·NE)`), so the column-tile rewind must clear the full *padded* column
+   height. (For aligned `M = YT·NE` the two forms coincide.)
+
+**Allocation / liveness obligations for a real driver (sim satisfies these):**
+- `dst` must be allocated for the padded extent `N × MP` (and, for `N % NE != 0`,
+  the all-padding `Aᵀ` rows `[N, NT·NE)` are addressed by `AW`s carrying
+  `wstrb = 0` — see §4.3; either over-allocate to `NT·NE` rows or rely on the
+  zero-strobe beats writing nothing).
+- `src` reads extend up to row `YT·NE−1`, col `NT·NE−1` (tile padding); the
+  source buffer must cover that or the reads must be benign (masked on write).
+- **`NumAxInFlight ≥ NE`.** The engine must buffer a whole `NE`-beat tile before
+  its first output beat, and the backend holds one transaction slot per single-beat
+  burst from `AR` until `B`; so `NE` bursts sit read-done/write-pending at once.
+  With runtime `E`, `NE = SW` in the worst case (`E=1`), so a backend that must
+  serve int8 transpose needs **synth-time `NumAxInFlight ≥ StrbWidth`**. Below the
+  threshold the write channel deadlocks (empirically `NE−1` is the boundary;
+  use `≥ NE`). Verified by sweep in `test/tb_idma_transpose_nd.sv` (param
+  `NumAxInFlight`, auto-sized to `StrbWidth`).
+
+### 4.3 `strb_o → wstrb` — the load-bearing RTL change (IMPLEMENTED)
+
+`wstrb` was born **solely** from address-alignment masks in
+`src/backend/idma_axi_write.sv`: `w_first_mask = '1 << offset`, `w_last_mask =
+'1 >> (StrbWidth - tailer)`, combined into `mask_out` (`proc_out_mask_generator`),
+driven onto `write_req_o.w.strb` **and** used to pop the buffer
+`buffer_out_ready_o = mask_out`. There was no input port for an engine mask.
+
+Implemented (shared `idma_axi_write.sv`, backward-compatible):
+1. New input **`mask_ext_i`** (strb-wide), **AND**ed into `mask_out`
+   (`mask_out = alignment_masks & mask_ext_i`). Other backends tie it to `'1`
+   (no change). This is the deciding modification: it both narrows `w.strb` to
+   the real bytes of an edge tile **and** narrows the buffer pop so partial/zero
+   beats don't require the full beat.
+2. New output **`w_beat_done_o = write_happening`** — a strobe-*independent*
+   "a W beat was accepted" pulse. The transpose handshake retires the engine
+   output on `w_beat_done` (not on `|buffer_out_ready`), so an **all-padding
+   beat** (`strb_o = 0`, e.g. the non-existent `Aᵀ` rows of a `N % NE != 0`
+   edge) still issues one `wstrb=0` W beat and drains — instead of stalling on
+   `buffer_out_valid_i != 0`.
+3. In the transport (`idma_transport_layer_rw_axi.sv`), the transpose path drives
+   **presence = all-ones** (`buffer_out_valid_i = {StrbWidth{tp_out_valid}}`) and
+   carries the engine strobe separately as `wr_strb → mask_ext_i`, shifted by
+   `w_dp_req_i.shift` **identically** to the data (parallel `mask_ext_shifted`).
+   Presence-as-all-ones is what lets a zero-strobe beat satisfy `ready_to_write`
+   (`(presence & mask_out) == mask_out` holds for `mask_out = 0`) while the
+   `buffer_out_valid_i != 0` guard still protects the non-transpose path.
 
 `strb_o` is **already byte-granular** — `strb_int[p] = em[p >> transp_mode_i]`
-(`idma_otf_transpose.sv:244-245`) expands the per-element mask to one bit per
-byte — so it maps directly onto byte-granular `wstrb` for E ∈ {1,2,4}. No
-expansion needed.
+(`idma_otf_transpose.sv`) expands the per-element mask to one bit per byte — so it
+maps directly onto byte-granular `wstrb` for E ∈ {1,2,4}. No expansion needed.
+
+> The original plan listed only step 1. Steps 2–3 are the part it missed: edge
+> tiles produce **both** partially-masked beats (`leftover_rows`, within a row)
+> **and** all-zero beats (`leftover_cols`, whole `Aᵀ` rows that don't exist).
+> Masking alone deadlocks on the all-zero beats; the strobe-independent retire +
+> all-ones presence is what makes them drain. Both are proven load-bearing by the
+> padding-sentinel negative control in `tb_idma_transpose_nd.sv` (disable the
+> strobe → padding is clobbered with real transposed data → test fails).
 
 ### 4.4 INCR-only — respected
 
