@@ -179,18 +179,20 @@ module tb_idma_transpose_nd
     nd_req.burst_req.opt.tensor_m     = 12'(M);
     nd_req.burst_req.opt.tensor_n     = 12'(N);
     nd_req.burst_req.opt.last         = 1'b1;
-    // d_req[0] = local row within tile (reps NE): src +N*E, dst +M*E
+    // ND midend strides are INCREMENTAL (added on each dim roll-over, inner dims
+    // reset), so they are deltas, not absolute per-dim steps.
+    // d_req[0] = local row within tile (reps NE)
     nd_req.d_req[0].reps        = reps_t'(NE);
-    nd_req.d_req[0].src_strides = addr_t'(N*EB);
-    nd_req.d_req[0].dst_strides = addr_t'(M*EB);
-    // d_req[1] = row-tile (reps YT): src +NE*N*E, dst +NE*E
+    nd_req.d_req[0].src_strides = addr_t'(int'(N*EB));                       // next source row
+    nd_req.d_req[0].dst_strides = addr_t'(int'(M*EB));                       // next Aᵀ row
+    // d_req[1] = row-tile (reps YT)
     nd_req.d_req[1].reps        = reps_t'(YT);
-    nd_req.d_req[1].src_strides = addr_t'(NE*N*EB);
-    nd_req.d_req[1].dst_strides = addr_t'(NE*EB);
-    // d_req[2] = col-tile (reps NT): src +NE*E, dst +NE*M*E
+    nd_req.d_req[1].src_strides = addr_t'(int'(N*EB));                       // rows are consecutive
+    nd_req.d_req[1].dst_strides = addr_t'(int'(NE*EB) - int'((NE-1)*M*EB));  // back up cols, next col-block
+    // d_req[2] = col-tile (reps NT)
     nd_req.d_req[2].reps        = reps_t'(NT);
-    nd_req.d_req[2].src_strides = addr_t'(NE*EB);
-    nd_req.d_req[2].dst_strides = addr_t'(NE*M*EB);
+    nd_req.d_req[2].src_strides = addr_t'(int'(NE*EB) - int'((M-1)*N*EB));   // back to row0, next col-block
+    nd_req.d_req[2].dst_strides = addr_t'(int'(M*EB)  - int'((YT-1)*NE*EB)); // next Aᵀ col-block
 
     $display("[TPN] launching %0dx%0d EB=%0d transpose via ND midend (NE=%0d, %0dx%0d tiles)", M, N, EB, NE, YT, NT);
     nd_req_valid = 1'b1;
