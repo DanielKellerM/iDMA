@@ -155,6 +155,18 @@ module tb_idma_transpose_nd
   addr_t sb = 'h0000_1000;
   addr_t db = 'h0000_4000;
 
+  // DECERR contract check: every AW (incl. the wstrb=0 all-padding rows) must
+  // land within the documented full tile-padded dst allocation [db, db+NT*NE*MP*EB).
+  // An AW outside it would DECERR on a strict slave that decodes the address
+  // before the strobes — this turns the over-allocation contract from documented
+  // into tested (fires non-vacuously if a stride sends an AW out of the region).
+  always @(posedge clk) if (rst_n && axi_write_req.aw_valid && axi_write_rsp.aw_ready) begin
+    automatic addr_t aw_end = db + addr_t'(NT*NE*MP*EB);
+    if (axi_write_req.aw.addr < db || axi_write_req.aw.addr >= aw_end)
+      $fatal(1, "[TPN] AW 0x%0h outside dst alloc [0x%0h,0x%0h) — would DECERR on a strict slave",
+             axi_write_req.aw.addr, db, aw_end);
+  end
+
   task automatic wr_mem(input addr_t a, input logic [7:0] d); i_axi_sim_mem.mem[a] = d; endtask
   function automatic logic [7:0] rd_mem(input addr_t a);
     return i_axi_sim_mem.mem.exists(a) ? i_axi_sim_mem.mem[a] : 8'hxx;
