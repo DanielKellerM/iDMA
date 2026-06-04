@@ -17,6 +17,8 @@ VCS         ?= vcs
 VERILATOR   ?= verilator
 VLOGAN      ?= vlogan
 VSIM        ?= vsim
+VLOG        ?= vlog
+VLIB        ?= vlib
 
 # Shell
 SHELL := /bin/bash
@@ -307,7 +309,7 @@ define idma_generate_vsim
 endef
 
 $(IDMA_VSIM_DIR)/compile.tcl: $(IDMA_BENDER_FILES) $(IDMA_FULL_TB) $(IDMA_FULL_RTL) $(IDMA_INCLUDE_ALL) $(IDMA_WAVE_ALL)
-	$(call idma_generate_vsim, $@, -t sim -t test -t idma_test -t synth -t rtl -t asic -t snitch_cluster,../../..)
+	$(call idma_generate_vsim, $@, -t sim -t test -t idma_test -t synth -t rtl -t asic -t snitch_cluster -t split_rtl,../../..)
 
 .PHONY: idma_sim_tb_idma_rt_midend
 
@@ -316,7 +318,54 @@ idma_sim_tb_idma_rt_midend: $(IDMA_VSIM_DIR)/compile.tcl
 	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc \
 	    tb_idma_rt_midend -do "run -all; quit"
 
+# Standalone self-checking transpose-engine regression (DPI-C golden, no backend deps).
+# Run with the Questa SEPP wrapper, e.g.:
+#   make idma_sim_tb_idma_otf_transpose VSIM="questa-2023.4 vsim" VLOG="questa-2023.4 vlog" VLIB="questa-2023.4 vlib"
+IDMA_OTF_TP_RTL := $(abspath $(IDMA_ROOT)/src/backend/idma_otf_transpose.sv)
+IDMA_OTF_TP_TB  := $(abspath $(IDMA_ROOT)/test/tb_idma_otf_transpose.sv)
+IDMA_OTF_TP_DPI := $(abspath $(IDMA_ROOT)/test/idma_transpose_dpi.c)
+IDMA_OTF_TP_DIR := $(abspath $(IDMA_VSIM_DIR))/otf_transpose
+
+.PHONY: idma_sim_tb_idma_otf_transpose
+idma_sim_tb_idma_otf_transpose:
+	mkdir -p $(IDMA_OTF_TP_DIR)
+	cd $(IDMA_OTF_TP_DIR); $(VLIB) work
+	cd $(IDMA_OTF_TP_DIR); $(VLOG) -sv $(IDMA_OTF_TP_DPI)
+	cd $(IDMA_OTF_TP_DIR); $(VLOG) -sv -svinputport=compat -timescale "1ns/1fs" $(IDMA_OTF_TP_RTL) $(IDMA_OTF_TP_TB)
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=8  -gM=13  -gN=19 -gEB=1 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=8  -gM=7   -gN=5  -gEB=2 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=8  -gM=5   -gN=3  -gEB=4 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=64 -gM=130 -gN=70 -gEB=1 tb_idma_otf_transpose +BP -do "run -all; quit"
+
+# Multi-tile transpose via the ND midend (transposed strides) -> rw_axi backend
+# (engine spliced at the write seam) -> axi_sim_mem. Covers aligned and edge
+# (M or N not a multiple of NE) geometries for int8/fp16/fp32. Needs the
+# split_rtl flow (per-variant routing). Run with the Questa SEPP wrapper:
+#   make idma_sim_tb_idma_transpose_nd VSIM="questa-2023.4 vsim"
+.PHONY: idma_sim_tb_idma_transpose_nd
+idma_sim_tb_idma_transpose_nd: $(IDMA_VSIM_DIR)/compile.tcl
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -do "source compile.tcl; quit"
+	# ── aligned (regression: M,N multiples of NE) ──
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=8   -gN=8  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=16  -gN=16 -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=16  -gN=8  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=32  -gN=24 -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=8   -gN=8  -gEB=2 tb_idma_transpose_nd -do "run -all; quit"
+	# ── edge: partial output cols only (M%NE!=0, N%NE==0; within-beat wstrb) ──
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=6   -gN=8  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	# ── edge: partial output rows only (N%NE!=0; zero-strobe drain beats) ──
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=8   -gN=6  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	# ── edge: both partial (int8) ──
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=6   -gN=6  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=5   -gN=7  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=10  -gN=6  -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+	# ── edge: fp16 (EB=2) and fp32 (EB=4) ──
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=32 -gM=5   -gN=5  -gEB=2 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=9   -gN=5  -gEB=4 tb_idma_transpose_nd -do "run -all; quit"
+	cd $(IDMA_VSIM_DIR); $(VSIM) -c -t 1ps -voptargs=+acc -gDataWidth=64 -gM=13  -gN=19 -gEB=1 tb_idma_transpose_nd -do "run -all; quit"
+
 idma_sim_clean:
+	rm -rf $(IDMA_OTF_TP_DIR)
 	rm -rf $(IDMA_VSIM_DIR)/compile.tcl
 	rm -rf $(IDMA_VSIM_DIR)/work
 	rm -f  $(IDMA_VSIM_DIR)/dma_trace_*
