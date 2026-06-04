@@ -172,8 +172,15 @@ Seven verification-flagged gaps probed in isolated builds (repo untouched):
   already cut the worst comb path with the registered output stage).
 - **FIXED THIS STEP:** G5 (mode saturation), G8 (AW-bounds test), G9 (YAML regen
   X-safety), engine-header comment correction.
-- **FLAGGED, NOT FIXED (pre-existing, shared module):** `idma_nd_midend`
-  back-to-back stale-address corruption — see `doc/TODO-nd-midend-back-to-back.md`.
-  Does not affect the single-request transpose tests.
+- **RESOLVED — was a TB handshake bug, not a midend RTL bug:** the reported
+  `idma_nd_midend` back-to-back "stale-address corruption" root-caused to the
+  transpose testbenches holding `nd_req_valid` one cycle past `nd_req_ready`,
+  which makes the midend spuriously re-walk a consumed request and leaves stale
+  address state for the next one. Fixed the handshake in `tb_idma_transpose_nd`
+  (drop valid on accept, like the canonical driver); the midend is correct for
+  protocol-compliant producers. Added regressions `test/tb_idma_transpose_b2b.sv`
+  (two end-to-end transposes to distinct dst) and `test/midend/tb_idma_nd_midend_b2b.sv`
+  (midend burst-address sequence under backpressure). See
+  `doc/TODO-nd-midend-back-to-back.md`.
 
 See `doc/transpose-engine-routing-plan.md` for the full routing/signaling design.

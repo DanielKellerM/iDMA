@@ -1,51 +1,61 @@
-# idma_nd_midend — back-to-back ND transfer stale-address corruption
+# Back-to-back ND transfers — root cause was the TB handshake, NOT a midend bug
 
-**Status:** flagged, NOT fixed. Pre-existing defect in the shared `src/midend/idma_nd_midend.sv`
-(not introduced by the transpose work). Surfaced by the transpose gap-closure
-multi-agent run; RTL-consistent, but fix + a dedicated regression are a separate
-task because the module is used by every ND transfer (blast radius).
+**Status:** RESOLVED. The reported "idma_nd_midend back-to-back stale-address
+corruption" was reproduced, root-caused, fixed, and regressed. The fix is in the
+**testbench handshake**, not the shared `idma_nd_midend.sv` RTL — the midend is
+correct for protocol-compliant producers.
 
-## Symptom
-The **second** of two back-to-back ND transfers reads/writes the wrong bytes: the
-second transfer reuses the address pointers left over from the first instead of
-reloading its own `burst_req.src_addr` / `burst_req.dst_addr`. Observed (agent
-repro, two back-to-back ND transposes via an extended `tb_idma_transpose_nd`):
-the second transfer's data is off by a constant `src`/`dst` base delta (e.g. T2
-`src_addr_q=0x01107` instead of `0x01000` for an 8×8; reproduced for 8×8, 16×16,
-13×19) and the write address can **underflow below the dst base** (`AW addr=0x03ff8`
-for `dst=0x04000`). Affects any two back-to-back ND transfers — transpose is just
-the natural trigger (the transpose flow drives the ND midend directly).
+## What was reported
+A gap-closure agent extended `tb_idma_transpose_nd` to two back-to-back ND
+transposes and saw the second transpose land at the wrong destination / read the
+wrong source bytes, with a trace showing `stride_sel_q=0` / a stale `src_addr_q`
+at the second request. It attributed this to `idma_nd_midend`.
 
-## Root cause (RTL)
-`idma_nd_midend.sv`:
-- `src_addr_calc` / `dst_addr_calc` (`:164-186`) reload the base address from
-  `nd_req_i.burst_req.{src,dst}_addr` **only** when `stride_sel_q == NumDim-1`;
-  otherwise they accumulate `+= d_req[stride_sel_q].strides` (or hold).
-- `stride_sel_q`, `src_addr_q`, `dst_addr_q` (`FFL`, `:233-235`) are clock-enabled
-  by `nd_req_valid_i` and **freeze (not reset) between transfers**.
-- `stride_sel_q = popcount(stage_clear)`. At the first beat of a *new* request it
-  is not guaranteed to be `NumDim-1`, so the base reload is skipped and the new
-  transfer keeps walking from the previous transfer's stale pointer.
+## What actually happens (reproduced both ways)
+- `test/tb_idma_transpose_b2b.sv` (two transposes to **different** dst bases)
+  **FAILS** (xfer 2's dst stays the 0xCC sentinel, 48 mismatches) when the driver
+  holds `nd_req_valid` one cycle past `nd_req_ready`, and **PASSES** when the
+  driver drops `nd_req_valid` the cycle the accept is seen.
+- `test/midend/tb_idma_nd_midend_b2b.sv` drives the midend directly (with
+  backpressure) and golden-checks the burst-address sequence: back-to-back AND
+  gapped transfers each walk from their own base — **PASS**. The midend reloads
+  correctly for compliant driving.
+- The canonical ND driver `idma_test::idma_nd_driver::launch_nd_tf`
+  (`test/idma_test.sv:881-895`) drops `req_valid` the cycle `req_ready` is seen —
+  i.e. it is compliant, which is why the stock `tb_idma_nd_midend` never hit this.
 
-The base-reload condition (`stride_sel_q == NumDim-1`) is a proxy for "transfer
-boundary" that holds for a single transfer from reset (the reset value is
-`NumDim-1`) and at a transfer's own last burst, but is **not** a reliable
-"first burst of a new request" signal under continuous/back-to-back `nd_req_valid`.
+## Root cause
+`burst_req_valid_o = nd_req_valid_i & !zero` (`idma_nd_midend.sv:98`): the midend
+keeps issuing bursts while `nd_req_valid_i` is high. The ND request is *accepted*
+on its last burst (`nd_req_ready_o` pulses), but if the producer holds the SAME
+request valid for one more cycle, the midend begins a **spurious re-walk** of it.
+If the producer then drops valid mid-re-walk, the address state
+(`stride_sel_q`/`src_addr_q`/`dst_addr_q`, `:233-235`) is frozen mid-walk
+(`stride_sel_q != NumDim-1`), so the base-reload condition is not met for the
+NEXT request → it walks from the stale pointer. The transpose testbenches
+hand-rolled a handshake that held `nd_req_valid` one cycle past `nd_req_ready`
+(an `@(posedge clk)` too many), triggering exactly this.
 
-## Proposed fix (for a separate, verified change)
-Reload `src_addr_q`/`dst_addr_q` (and reset `stride_sel_q`) on the **first burst of
-each new request** rather than gating on `stride_sel_q == NumDim-1`. E.g. derive a
-per-transfer "first burst" flag from the `nd_req` handshake (`nd_req_ready_o` /
-the transition into a new request) and use it to force the base reload, or reset
-`stride_sel_q`/`src_addr_q`/`dst_addr_q` at the `nd_req_ready_o` handshake.
-Add a back-to-back regression to `test/midend/tb_idma_nd_midend.sv` (two ND
-requests with no idle gap; assert the second transfers the correct bytes and the
-addresses never underflow the base). This is a root-cause fix, **not** a
-workaround — do not "fix" it by mandating an idle gap between ND requests or by
-resetting only on the transpose path.
+This is a producer-contract issue: **hold `nd_req_valid` until `nd_req_ready`, then
+drop it (or present a new payload) the same cycle — do not hold a consumed request
+valid.** The midend is protocol-correct; the hand-rolled TB handshake was not.
 
-## Impact on the transpose work
-None for what is verified today: every transpose test issues a **single** ND
-request per simulation, so the stale-address path is not exercised. A real
-deployment that streams back-to-back ND transposes (or any back-to-back ND
-copies) would hit it. Flag here so it is fixed in the midend before that.
+## Fix
+- `test/tb_idma_transpose_nd.sv`: drop `nd_req_valid` the cycle `nd_req_ready` is
+  seen (matches the canonical driver) — removes the spurious re-walk. Full
+  aligned+edge matrix still PASSes.
+- `test/tb_idma_transpose_b2b.sv` (new): end-to-end regression — two back-to-back
+  transposes to different dst bases, both checked. Non-vacuous: it FAILS on the
+  old non-compliant handshake.
+- `test/midend/tb_idma_nd_midend_b2b.sv` (new): focused midend regression — a
+  stream of back-to-back + gapped ND transfers with backpressure, golden-checking
+  that each walks from its own base.
+
+## Not changed (and why)
+`idma_nd_midend.sv` is left as-is: it is correct under the standard producer
+contract, and it is a shared module used by every ND transfer. A defensive
+hardening (latch "request consumed" so a held-valid request is not re-walked, or
+reload the base on the first burst of each request regardless of prior state)
+would make it robust to non-compliant producers, but is a separate, blast-radius
+change to be weighed on its own — it is NOT required to make back-to-back ND
+transfers work, which they do with a compliant producer.
