@@ -20,7 +20,31 @@ No workarounds; every gap below is tracked, not silently accepted.
 - **Step 3** (folded into Step 5) `strb_o → wstrb` AND into `mask_out`
   (idma_axi_write.sv) — only needed for PARTIAL tiles; full single tiles have
   `strb_o='1` so the existing `buffer_out_valid_i` gating suffices.
-- **Step 4** ⏳ end-to-end single-tile transpose verification. IN PROGRESS:
+## 3-agent integration audit (verdict: single-tile PoC sound; multi-tile NOT)
+The single-tile (NE×NE, aligned, int8) transpose is genuinely working and
+NON-vacuously verified (3 independent negative controls each flip PASS→FAIL:
+bypass, copy-expectation, redirected write). Build mechanism (split_rtl) sound;
+copies regression-clean. BUT the auditors empirically showed (reusing the harness)
+that the integration is **single-tile-only** because the legalizer feeds a LINEAR
+row-major byte stream while the engine expects (col-tile,row-tile,row) tiled order
+with no tiling address-gen:
+- **B2** multi-tile (M or N > NE) → **silent data corruption** (8×8 → 62/64 wrong, B-response still arrives).
+- **B3** partial/edge tiles & non-StrbWidth-multiple lengths → **deadlock** (strb_o not reconciled with axi_write `mask_out`; `&buffer_out_valid` stalls on partial final beat).
+
+Real fixes done (NOT assertions): forced `decouple_rw|aw` on transpose_en in the
+legalizer (engine ping-pong needs full-duplex); transpose test FAIL is now `$fatal`.
+Workaround-assertions were explicitly rejected — the real fix is the address plane.
+
+**REMAINING REAL WORK (the gaps, to implement not assert):** the address plane —
+tiled strided source reads in (col-tile,row-tile,row) order + transposed-stride
+destination writes (routing-plan §4, NumDim=4 ND program; needs the ND midend in
+the backend flow or strided legalizer addressing) + `strb_o→wstrb` edge masking
+(idma_axi_write `mask_out`) + read padding to tile boundaries. This makes
+multi-tile/edge actually work; single-tile is the verified subset.
+Also: B1 idma.mk `-t split_rtl` still UNCOMMITTED (dependency-locked to rt) → fresh
+`make` builds the bundle without routing — must be resolved for reproducibility.
+
+- **Step 4** ✅ single-tile only. IN PROGRESS toward multi-tile:
   `launch_tf` extended with defaulted transpose params (idma_test.sv) — compiles,
   regression clean. REMAINING: in the rw_axi TB module of `tb_idma_generated.sv`
   (lines ~336-630; init_mem/compare_mem from `test/include/tb_tasks.svh`), add a
