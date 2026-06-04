@@ -127,7 +127,9 @@ write_template: |
         .write_rsp_i        ( ${write_response} ),
         .buffer_out_i       ( buffer_out_shifted ),
         .buffer_out_valid_i ( buffer_out_valid_shifted ),
-        .buffer_out_ready_o ( ${buffer_out_ready} )
+        .buffer_out_ready_o ( ${buffer_out_ready} ),
+        .mask_ext_i         ( '1 ),
+        .w_beat_done_o      ( /* unused */ )
     );
 synth_wrapper_ports_write: |
     output id_t                    axi_aw_id_o,
