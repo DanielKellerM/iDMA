@@ -8,5 +8,11 @@ include
 !idma_backend_rw_axi.sv
 !idma_legalizer_rw_axi.sv
 !idma_transport_layer_rw_axi.sv
+# The shared idma_axi_write.sv now carries the mask_ext_i / w_beat_done_o ports;
+# every transport that instantiates it must connect them (tie-off in non-transpose
+# variants) or the split_rtl build fails. Track those three until templatized.
+!idma_transport_layer_r_obi_w_axi.sv
+!idma_transport_layer_rw_axi_rw_axis.sv
+!idma_transport_layer_r_obi_rw_init_w_axi.sv
 # Bundled TB carrying the +transpose_test sequence (prototype).
 !tb_idma_generated.sv

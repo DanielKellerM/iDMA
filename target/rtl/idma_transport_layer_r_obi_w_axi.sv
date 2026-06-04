@@ -10,7 +10,7 @@
 `include "common_cells/registers.svh"
 
 /// Implementing the transport layer in the iDMA backend.
-module idma_transport_layer_rw_axi #(
+module idma_transport_layer_r_obi_w_axi #(
     /// Number of transaction that can be in-flight concurrently
     parameter int unsigned NumAxInFlight = 32'd2,
     /// Data width
@@ -23,8 +23,6 @@ module idma_transport_layer_rw_axi #(
     parameter bit MaskInvalidData = 1'b1,
     /// Print the info of the FIFO configuration
     parameter bit PrintFifoInfo = 1'b0,
-    /// Instantiate the on-the-fly transpose engine at the write seam
-    parameter bit EnableTranspose = 1'b0,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
     /// `w_dp_req_t` type:
@@ -39,7 +37,10 @@ module idma_transport_layer_rw_axi #(
     parameter type read_meta_channel_t = logic,
     /// AXI4+ATOP Request and Response channel type
     parameter type axi_req_t = logic,
-    parameter type axi_rsp_t = logic
+    parameter type axi_rsp_t = logic,
+    /// OBI Request and Response channel type
+    parameter type obi_req_t = logic,
+    parameter type obi_rsp_t = logic
 )(
     /// Clock
     input  logic clk_i,
@@ -48,10 +49,10 @@ module idma_transport_layer_rw_axi #(
     /// Testmode in
     input  logic testmode_i,
 
-    /// AXI4+ATOP read request
-    output axi_req_t axi_read_req_o,
-    /// AXI4+ATOP read response
-    input  axi_rsp_t axi_read_rsp_i,
+    /// OBI read request
+    output obi_req_t obi_read_req_o,
+    /// OBI read response
+    input  obi_rsp_t obi_read_rsp_i,
 
     /// AXI4+ATOP write request
     output axi_req_t axi_write_req_o,
@@ -142,41 +143,31 @@ module idma_transport_layer_rw_axi #(
     byte_t [2*StrbWidth-1:0] buffer_out_tmp;
     byte_t [StrbWidth-1:0] buffer_out, buffer_out_shifted;
 
-    // write seam (muxed: passthrough or transpose engine) feeding the write shifter
-    byte_t [StrbWidth-1:0] wr_data;
-    strb_t                 wr_valid;          // byte presence into the write manager
-    strb_t                 wr_strb;           // engine wstrb mask (narrows the write)
-    strb_t                 dataflow_ready_in;
-    strb_t                 mask_ext_shifted;  // wr_strb after the write barrel shift
-    logic                  w_beat_done;       // write manager accepted a beat
-
     //--------------------------------------
     // Read Ports
     //--------------------------------------
 
-    idma_axi_read #(
-        .StrbWidth  ( StrbWidth           ),
-        .byte_t     ( byte_t              ),
-        .strb_t     ( strb_t              ),
-        .r_dp_req_t ( r_dp_req_t          ),
-        .r_dp_rsp_t ( r_dp_rsp_t          ),
-        .ar_chan_t  ( read_meta_channel_t ),
-        .read_req_t ( axi_req_t           ),
-        .read_rsp_t ( axi_rsp_t           )
-    ) i_idma_axi_read (
-        .clk_i             ( clk_i      ),
-        .rst_ni            ( rst_ni     ),
+    idma_obi_read #(
+        .StrbWidth        ( StrbWidth           ),
+        .byte_t           ( byte_t              ),
+        .strb_t           ( strb_t              ),
+        .r_dp_req_t       ( r_dp_req_t          ),
+        .r_dp_rsp_t       ( r_dp_rsp_t          ),
+        .read_meta_chan_t ( read_meta_channel_t ),
+        .read_req_t       ( obi_req_t           ),
+        .read_rsp_t       ( obi_rsp_t           )
+    ) i_idma_obi_read (
         .r_dp_req_i        ( r_dp_req_i ),
         .r_dp_valid_i      ( r_dp_valid_i ),
         .r_dp_ready_o      ( r_dp_ready_o ),
         .r_dp_rsp_o        ( r_dp_rsp_o ),
         .r_dp_valid_o      ( r_dp_valid_o ),
         .r_dp_ready_i      ( r_dp_ready_i ),
-        .ar_req_i          ( ar_req_i ),
-        .ar_valid_i        ( ar_valid_i ),
-        .ar_ready_o        ( ar_ready_o ),
-        .read_req_o        ( axi_read_req_o ),
-        .read_rsp_i        ( axi_read_rsp_i ),
+        .read_meta_req_i   ( ar_req_i ),
+        .read_meta_valid_i ( ar_valid_i ),
+        .read_meta_ready_o ( ar_ready_o ),
+        .read_req_o        ( obi_read_req_o ),
+        .read_rsp_i        ( obi_read_rsp_i ),
         .r_chan_valid_o    ( r_chan_valid_o ),
         .r_chan_ready_o    ( r_chan_ready_o ),
         .buffer_in_o       ( buffer_in ),
@@ -210,100 +201,16 @@ module idma_transport_layer_rw_axi #(
         .ready_o     ( buffer_in_ready          ),
         .data_o      ( buffer_out               ),
         .valid_o     ( buffer_out_valid         ),
-        .ready_i     ( dataflow_ready_in        )
+        .ready_i     ( buffer_out_ready_shifted )
     );
-
-    //--------------------------------------
-    // On-the-fly transpose engine (write seam) — bypassed unless transpose_en
-    //--------------------------------------
-
-    if (EnableTranspose) begin : gen_transpose
-        logic                  tp_active;
-        logic                  tp_in_valid, tp_in_ready;
-        logic                  tp_out_valid, tp_out_ready;
-        byte_t [StrbWidth-1:0] tp_data_o;
-        strb_t                 tp_strb_o;
-
-        // Latch the transpose config per transfer. w_dp_req_i is only valid while
-        // w_dp_valid_i; the FIFO output is X between transfers. Reset to 0 so the
-        // engine is cleanly bypassed at idle (no X into the bypass mux) and the
-        // config is held across the burst (w_dp_valid_i drops mid-burst).
-        logic        latched_tp_en_q;
-        logic [1:0]  latched_tp_mode_q;
-        logic [11:0] latched_m_q, latched_n_q;
-        logic        eff_tp_en;
-        logic [1:0]  eff_tp_mode;
-        logic [11:0] eff_m, eff_n;
-
-        always_ff @(posedge clk_i or negedge rst_ni) begin
-            if (!rst_ni) begin
-                latched_tp_en_q   <= 1'b0;
-                latched_tp_mode_q <= '0;
-                latched_m_q       <= '0;
-                latched_n_q       <= '0;
-            end else if (w_dp_valid_i) begin
-                latched_tp_en_q   <= w_dp_req_i.transpose_en;
-                latched_tp_mode_q <= w_dp_req_i.transp_mode;
-                latched_m_q       <= w_dp_req_i.tensor_m;
-                latched_n_q       <= w_dp_req_i.tensor_n;
-            end
-        end
-
-        assign eff_tp_en   = w_dp_valid_i ? w_dp_req_i.transpose_en : latched_tp_en_q;
-        assign eff_tp_mode = w_dp_valid_i ? w_dp_req_i.transp_mode  : latched_tp_mode_q;
-        assign eff_m       = w_dp_valid_i ? w_dp_req_i.tensor_m     : latched_m_q;
-        assign eff_n       = w_dp_valid_i ? w_dp_req_i.tensor_n     : latched_n_q;
-
-        // runtime arm: engine only used when this transfer requests transpose
-        assign tp_active    = eff_tp_en;
-        // beat-level handshake reassembled from the per-lane buffer interface
-        assign tp_in_valid  = tp_active & (&buffer_out_valid);
-        // engine beat retires when the write manager accepts the beat (strobe-
-        // independent, so all-padding edge beats with wstrb=0 still drain)
-        assign tp_out_ready = w_beat_done;
-
-        idma_otf_transpose #(
-            .StrbWidth ( StrbWidth )
-        ) i_idma_otf_transpose (
-            .clk_i           ( clk_i        ),
-            .rst_ni          ( rst_ni       ),
-            .clear_i         ( ~tp_active   ),
-            .transp_mode_i   ( eff_tp_mode  ),
-            .tensor_size_m_i ( eff_m        ),
-            .tensor_size_n_i ( eff_n        ),
-            .data_i          ( buffer_out   ),
-            .valid_i         ( tp_in_valid  ),
-            .ready_o         ( tp_in_ready  ),
-            .data_o          ( tp_data_o    ),
-            .strb_o          ( tp_strb_o    ),
-            .valid_o         ( tp_out_valid ),
-            .ready_i         ( tp_out_ready )
-        );
-
-        assign wr_data           = tp_active ? tp_data_o : buffer_out;
-        // presence = whole beat present when the engine holds a registered output;
-        // wstrb (edge masking) is carried separately via wr_strb so all-padding
-        // beats (engine strobe 0) still present as a valid beat and drain cleanly
-        assign wr_valid          = tp_active ? {StrbWidth{tp_out_valid}} : buffer_out_valid;
-        assign wr_strb           = tp_active ? tp_strb_o : '1;
-        // pop the whole beat only on a real engine input handshake (avoids empty-pop)
-        assign dataflow_ready_in = tp_active ? {StrbWidth{tp_in_valid & tp_in_ready}} : buffer_out_ready_shifted;
-    end else begin : gen_no_transpose
-        assign wr_data           = buffer_out;
-        assign wr_valid          = buffer_out_valid;
-        assign wr_strb           = '1;
-        assign dataflow_ready_in = buffer_out_ready_shifted;
-    end
 
     //--------------------------------------
     // Write Barrel shifter
     //--------------------------------------
 
-    assign buffer_out_tmp           = {wr_data, wr_data} >> (w_dp_req_i.shift*8);
+    assign buffer_out_tmp           = {buffer_out, buffer_out} >> (w_dp_req_i.shift*8);
     assign buffer_out_shifted       = buffer_out_tmp[$bits(buffer_out_shifted)/8-1:0];
-    assign buffer_out_valid_shifted = strb_t'({wr_valid, wr_valid} >>   w_dp_req_i.shift);
-    // engine wstrb mask shifted identically to data, so it stays byte-aligned
-    assign mask_ext_shifted         = strb_t'({wr_strb, wr_strb} >>   w_dp_req_i.shift);
+    assign buffer_out_valid_shifted = strb_t'({buffer_out_valid, buffer_out_valid} >>   w_dp_req_i.shift);
     assign buffer_out_ready_shifted = strb_t'({buffer_out_ready, buffer_out_ready} >> - w_dp_req_i.shift);
 
     //--------------------------------------
@@ -339,8 +246,8 @@ module idma_transport_layer_rw_axi #(
         .buffer_out_i       ( buffer_out_shifted ),
         .buffer_out_valid_i ( buffer_out_valid_shifted ),
         .buffer_out_ready_o ( buffer_out_ready ),
-        .mask_ext_i         ( mask_ext_shifted ),
-        .w_beat_done_o      ( w_beat_done )
+        .mask_ext_i         ( '1 ),
+        .w_beat_done_o      ( /* unused */ )
     );
 
     //--------------------------------------
