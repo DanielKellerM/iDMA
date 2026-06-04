@@ -15,10 +15,12 @@
 // 1->2B (fp16), 2->4B (fp32). With E = 2^transp_mode bytes, the bus carries
 // NE = StrbWidth/E elements per beat and the engine buffers a NE x NE element
 // tile (worst case E=1 -> StrbWidth x StrbWidth bytes).
-// transp_mode_i==2'b11 (E=8) is RESERVED: the geometry assumes E<=StrbWidth
-// (i.e. mode<=LaneW), so mode==3 is only meaningful for StrbWidth>=8 and yields
-// a negative `LaneW-transp_mode_i` shift (undefined NE) below that. Drivers must
-// not emit mode==3 unless StrbWidth>=8; behaviour is otherwise undefined.
+// transp_mode_i is valid iff E<=StrbWidth, i.e. mode<=LaneW (mode 3 / E=8 needs
+// StrbWidth>=8). For mode>LaneW the unsigned `LaneW-transp_mode_i` WRAPS in 32b
+// (not a negative shift), which would otherwise give a silently-wrong geometry
+// and an out-of-range readout. The engine saturates the effective mode at LaneW
+// (eff_mode below) so an out-of-contract mode degrades to a defined NE=1
+// pass-through instead of X; drivers should still constrain transp_mode_i<=LaneW.
 //
 // Full-duplex: two FF tile banks form a ping-pong double buffer. The producer
 // fills one bank row-by-row while the consumer drains the other bank
@@ -66,13 +68,18 @@ module idma_otf_transpose #(
 );
 
   // ── Geometry (NE always a power of two; only shifts / AND-masks, no div/mod) ──
+  logic [1:0]       eff_mode;         // element-size mode, saturated at LaneW
   logic [LaneW:0]   ne_m1;            // NE-1
-  logic [3:0]       log2_ne;          // log2(NE) = LaneW - transp_mode_i
+  logic [3:0]       log2_ne;          // log2(NE) = LaneW - eff_mode
   logic [11:0]      y_tiles, n_tiles; // row-tiles, col-tiles
   logic [LaneW:0]   leftover_rows, leftover_cols;  // M%NE, N%NE (run-global)
 
-  assign ne_m1         = (1 << (LaneW - transp_mode_i)) - 1;       // NE-1
-  assign log2_ne       = LaneW - transp_mode_i;
+  // Saturate at LaneW so an out-of-contract mode (E>StrbWidth, e.g. mode 3 on a
+  // narrow bus) degrades to a defined NE=1 pass-through, never an unsigned-wrap /
+  // out-of-range readout. eff_mode == transp_mode_i for every valid mode.
+  assign eff_mode      = (transp_mode_i > LaneW) ? LaneW[1:0] : transp_mode_i;
+  assign ne_m1         = (1 << (LaneW - eff_mode)) - 1;            // NE-1
+  assign log2_ne       = LaneW - eff_mode;
   // Widen the ceil-div add to 13b so it cannot wrap at the 12b dim range.
   assign y_tiles       = 12'((13'(tensor_size_m_i) + ne_m1) >> log2_ne);
   assign n_tiles       = 12'((13'(tensor_size_n_i) + ne_m1) >> log2_ne);
@@ -227,9 +234,9 @@ module idma_otf_transpose #(
   // (e, rd_cnt) from the draining bank: tile_q[rd_bank][e][rd_cnt*E + b].
   always_comb begin
     for (int p = 0; p < StrbWidth; p++) begin
-      automatic int unsigned e   = p >> transp_mode_i;
-      automatic int unsigned b   = p & ((1 << transp_mode_i) - 1);
-      automatic int unsigned col = (rd_cnt << transp_mode_i) | b;
+      automatic int unsigned e   = p >> eff_mode;
+      automatic int unsigned b   = p & ((1 << eff_mode) - 1);
+      automatic int unsigned col = (rd_cnt << eff_mode) | b;
       data_int[p] = tile_q[rd_bank][e][col];
     end
   end
@@ -255,7 +262,7 @@ module idma_otf_transpose #(
       em[e] = v;
     end
     for (int p = 0; p < StrbWidth; p++)
-      strb_int[p] = em[p >> transp_mode_i];
+      strb_int[p] = em[p >> eff_mode];
   end
 
   // ── Registered output stage (cuts the readout mux; full throughput) ──
