@@ -23,6 +23,8 @@ module idma_transport_layer_rw_axi #(
     parameter bit MaskInvalidData = 1'b1,
     /// Print the info of the FIFO configuration
     parameter bit PrintFifoInfo = 1'b0,
+    /// Instantiate the on-the-fly transpose engine at the write seam
+    parameter bit EnableTranspose = 1'b0,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
     /// `w_dp_req_t` type:
@@ -140,6 +142,11 @@ module idma_transport_layer_rw_axi #(
     byte_t [2*StrbWidth-1:0] buffer_out_tmp;
     byte_t [StrbWidth-1:0] buffer_out, buffer_out_shifted;
 
+    // write seam (muxed: passthrough or transpose engine) feeding the write shifter
+    byte_t [StrbWidth-1:0] wr_data;
+    strb_t                 wr_valid;
+    strb_t                 dataflow_ready_in;
+
     //--------------------------------------
     // Read Ports
     //--------------------------------------
@@ -200,16 +207,60 @@ module idma_transport_layer_rw_axi #(
         .ready_o     ( buffer_in_ready          ),
         .data_o      ( buffer_out               ),
         .valid_o     ( buffer_out_valid         ),
-        .ready_i     ( buffer_out_ready_shifted )
+        .ready_i     ( dataflow_ready_in        )
     );
+
+    //--------------------------------------
+    // On-the-fly transpose engine (write seam) — bypassed unless transpose_en
+    //--------------------------------------
+
+    if (EnableTranspose) begin : gen_transpose
+        logic                  tp_active;
+        logic                  tp_in_valid, tp_in_ready;
+        logic                  tp_out_valid, tp_out_ready;
+        byte_t [StrbWidth-1:0] tp_data_o;
+        strb_t                 tp_strb_o;
+
+        // runtime arm: engine only used when this transfer requests transpose
+        assign tp_active    = w_dp_req_i.transpose_en;
+        // beat-level handshake reassembled from the per-lane buffer interface
+        assign tp_in_valid  = tp_active & (&buffer_out_valid);
+        assign tp_out_ready = |buffer_out_ready;   // write manager popped the beat
+
+        idma_otf_transpose #(
+            .StrbWidth ( StrbWidth )
+        ) i_idma_otf_transpose (
+            .clk_i           ( clk_i                   ),
+            .rst_ni          ( rst_ni                  ),
+            .clear_i         ( ~tp_active              ),
+            .transp_mode_i   ( w_dp_req_i.transp_mode  ),
+            .tensor_size_m_i ( w_dp_req_i.tensor_m     ),
+            .tensor_size_n_i ( w_dp_req_i.tensor_n     ),
+            .data_i          ( buffer_out              ),
+            .valid_i         ( tp_in_valid             ),
+            .ready_o         ( tp_in_ready             ),
+            .data_o          ( tp_data_o               ),
+            .strb_o          ( tp_strb_o               ),
+            .valid_o         ( tp_out_valid            ),
+            .ready_i         ( tp_out_ready            )
+        );
+
+        assign wr_data           = tp_active ? tp_data_o : buffer_out;
+        assign wr_valid          = tp_active ? (tp_out_valid ? tp_strb_o : '0) : buffer_out_valid;
+        assign dataflow_ready_in = tp_active ? {StrbWidth{tp_in_ready}} : buffer_out_ready_shifted;
+    end else begin : gen_no_transpose
+        assign wr_data           = buffer_out;
+        assign wr_valid          = buffer_out_valid;
+        assign dataflow_ready_in = buffer_out_ready_shifted;
+    end
 
     //--------------------------------------
     // Write Barrel shifter
     //--------------------------------------
 
-    assign buffer_out_tmp           = {buffer_out, buffer_out} >> (w_dp_req_i.shift*8);
+    assign buffer_out_tmp           = {wr_data, wr_data} >> (w_dp_req_i.shift*8);
     assign buffer_out_shifted       = buffer_out_tmp[$bits(buffer_out_shifted)/8-1:0];
-    assign buffer_out_valid_shifted = strb_t'({buffer_out_valid, buffer_out_valid} >>   w_dp_req_i.shift);
+    assign buffer_out_valid_shifted = strb_t'({wr_valid, wr_valid} >>   w_dp_req_i.shift);
     assign buffer_out_ready_shifted = strb_t'({buffer_out_ready, buffer_out_ready} >> - w_dp_req_i.shift);
 
     //--------------------------------------

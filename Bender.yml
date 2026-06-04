@@ -43,6 +43,7 @@ sources:
       - src/backend/idma_axis_write.sv
       - src/backend/idma_channel_coupler.sv
       - src/backend/idma_dataflow_element.sv
+      - src/backend/idma_otf_transpose.sv
       - src/backend/idma_error_handler.sv
       - src/backend/idma_init_read.sv
       - src/backend/idma_init_write.sv

@@ -593,6 +593,7 @@ module idma_backend_rw_axi #(
         .BufferDepth                 ( BufferDepth                 ),
         .MaskInvalidData             ( MaskInvalidData             ),
         .PrintFifoInfo               ( PrintFifoInfo               ),
+        .EnableTranspose             ( 1'b1                        ),
         .r_dp_req_t                  ( r_dp_req_t                  ),
         .w_dp_req_t                  ( w_dp_req_t                  ),
         .r_dp_rsp_t                  ( r_dp_rsp_t                  ),
