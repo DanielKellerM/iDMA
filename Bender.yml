@@ -176,3 +176,7 @@ sources:
   - target: idma_test
     files:
       - target/rtl/tb_idma_generated.sv
+      # Multi-tile transpose path: ND-midend (transposed strides) -> backend
+      - target: all(idma_test, split_rtl)
+        files:
+          - test/tb_idma_transpose_nd.sv
