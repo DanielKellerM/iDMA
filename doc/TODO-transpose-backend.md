@@ -125,20 +125,24 @@ Also: B1 idma.mk `-t split_rtl` still UNCOMMITTED (dependency-locked to rt) → 
 - **G4 — data-plane splice pending:** engine instantiation, `clear_i` pulse,
   `strb_o→wstrb`, per-transfer `decouple_rw`, last-response-on-write, busy
   aggregation. None may be silently skipped (Steps 2–4).
-- **G5 — `transp_mode == 2'b11` (E=8) RESERVED.** ✅ documented as a reserved
-  encoding (engine header + routing-plan): geometry assumes `E ≤ StrbWidth`
-  (`mode ≤ LaneW`), so mode 3 is only meaningful for `StrbWidth ≥ 8` and yields a
-  negative `LaneW−mode` shift (undefined `NE`) below that. Per the no-workaround
-  rule we do NOT add a guard-assertion (assertions to reject inputs are
-  workarounds); a reserved 2-bit encoding with documented "do not emit" is the
-  correct treatment. A future driver/CSR layer is the right place to refuse it.
-- **G8 — all-padding-row `AW`s to out-of-range addresses (audit B).** For
-  `N % NE != 0` the engine drains `NT·NE` rows; the all-padding rows `[N, NT·NE)`
-  issue real `AW`s with `wstrb = 0`. A permissive slave writes nothing, but a
-  strict slave may `DECERR` on the address decode. Mitigation (documented in
-  routing-plan §4.2): `dst` must be allocated for the full `NT·NE × MP` extent —
-  a hard requirement, not optional. Future hardening: suppress `AW` issuance for
-  all-padding rows so under-allocation is safe.
+- **G5 — `transp_mode == 2'b11` (E=8) RESERVED.** ✅ HARDENED. Valid iff
+  `E ≤ StrbWidth` (`mode ≤ LaneW`; mode 3 only meaningful for `StrbWidth ≥ 8`).
+  For `mode > LaneW` the 32-bit **unsigned** `LaneW−mode` WRAPS (not a negative
+  shift — the engine header/this note are corrected) → silently-wrong geometry +
+  out-of-range readout (X). FIX: the engine saturates the effective mode at LaneW
+  (`eff_mode`, `idma_otf_transpose.sv`) so an out-of-contract mode degrades to a
+  defined `NE=1` pass-through instead of X. This is defensive RTL (handles the
+  whole input space), NOT a guard-assertion-as-substitute. `eff_mode == mode` for
+  every valid mode (matrix re-verified). The descriptor/CSR layer should still
+  clamp/reject `mode > LaneW` once a frontend exposes the field.
+- **G8 — all-padding-row `AW`s to out-of-range addresses.** ✅ contract now TESTED.
+  For `N % NE != 0` the engine drains `NT·NE` rows; the all-padding rows
+  `[N, NT·NE)` issue real `AW`s with `wstrb = 0`. A permissive slave writes
+  nothing; a strict slave may `DECERR` on the address decode. `dst` must be
+  allocated for the full `NT·NE × MP` extent (hard requirement, routing-plan §4.2).
+  `tb_idma_transpose_nd` now asserts every `AW` lands within `[db, db+NT·NE·MP·EB)`
+  (non-vacuous — a real-region bound trips on the row-6 padding AW). Future
+  hardening: suppress `AW` issuance for all-padding rows so under-allocation is safe.
 - **G6 — frontends not wired.** Transpose is reachable ONLY via the backend-TB
   `opt` drive, never from reg/desc64/inst64. Acceptable while the goal is
   backend-TB verification. Plan §2 lists insertion points; includes the M/N
@@ -146,5 +150,30 @@ Also: B1 idma.mk `-t split_rtl` still UNCOMMITTED (dependency-locked to rt) → 
 - **G7 — backend_synth wrappers** assign `idma_req.opt` field-by-field with no
   `'0` base and omit the 4 fields (latent X if a synth wrapper is simulated;
   not in the sim compile path today). Fix in the synth-wrapper template.
+- **G9 — regen drops the AXI-write mask ports → latent X on every wstrb.** The
+  shared `idma_axi_write` now has required `mask_ext_i`/`w_beat_done_o`, connected
+  only in the hand-patched generated transports. The YAML `write_template`
+  (`src/db/idma_axi.yml`) lacked them, so `make idma_hw_all` regenerated transports
+  that leave `mask_ext_i` floating (`'z` AND into `mask_out` → `wstrb = 'x` on EVERY
+  AXI write, transpose or not; Questa flags missing ports as warnings, not errors).
+  ✅ MITIGATED: the `write_template` now emits `.mask_ext_i('1)` / `.w_beat_done_o()`
+  tie-offs so regen is X-safe for all variants. (The rw_axi transpose seam override
+  is still hand-patched until full templatization — Final step.)
+
+## Gap-closure multi-agent run (outcomes)
+Seven verification-flagged gaps probed in isolated builds (repo untouched):
+- **CLOSED-BENIGN/NOT-A-RISK:** geometry fuzz (~1996 random+exhaustive-boundary
+  geometries, 0 breaks); ping-pong engine (back-to-back self-reset, degenerate
+  single-tile, mid-transfer clear/abort, max skew — all correct via DPI golden);
+  EB=2/4 liveness (boundary `NE−1` as predicted, always a loud watchdog) + EB=2/4
+  strobed-lane X (0 leaks); `MaskInvalidData=0` (X only on AXI-legal non-strobed
+  lanes, memory never corrupted — recommend `MaskInvalidData=1` for transpose
+  configs to keep the bus X-free); synth/formal = maturity gap, not a bug (design
+  already cut the worst comb path with the registered output stage).
+- **FIXED THIS STEP:** G5 (mode saturation), G8 (AW-bounds test), G9 (YAML regen
+  X-safety), engine-header comment correction.
+- **FLAGGED, NOT FIXED (pre-existing, shared module):** `idma_nd_midend`
+  back-to-back stale-address corruption — see `doc/TODO-nd-midend-back-to-back.md`.
+  Does not affect the single-request transpose tests.
 
 See `doc/transpose-engine-routing-plan.md` for the full routing/signaling design.
