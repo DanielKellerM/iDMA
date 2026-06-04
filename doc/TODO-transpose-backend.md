@@ -35,7 +35,22 @@ Real fixes done (NOT assertions): forced `decouple_rw|aw` on transpose_en in the
 legalizer (engine ping-pong needs full-duplex); transpose test FAIL is now `$fatal`.
 Workaround-assertions were explicitly rejected — the real fix is the address plane.
 
-**REMAINING REAL WORK (the gaps, to implement not assert):** the address plane —
+## UPDATE — multi-tile address plane IMPLEMENTED + verified (aligned dims)
+`test/tb_idma_transpose_nd.sv`: idma_nd_midend (NumDim=4, **incremental** transposed
+strides) → idma_backend_rw_axi (engine) → axi_sim_mem. The ND midend generates the
+tiled read order + transposed-placed writes the engine needs; the engine+midend
+compose with no deadlock. PASS (no assertions, real data check vs golden):
+int8 8×8/16×16/16×8/8×16/32×24, fp16 8×8/8×16. Single-tile + copies still green.
+KEY FIX: ND strides are INCREMENTAL deltas (added on dim roll-over, inner dims
+reset), NOT absolute — transpose needs negative jumps. Formulas (aligned M=YT·NE,
+N=NT·NE): src[N·E, N·E, NE·E−(M−1)·N·E]; dst[M·E, NE·E−(NE−1)·M·E, M·E−(YT−1)·NE·E].
+Commit 8fa7247.
+
+REMAINING: **edge tiles** (M or N not a multiple of NE) — need strb_o→wstrb edge
+masking (idma_axi_write mask_out) + read padding to tile boundaries + edge-aware
+strides. Plus B1 (idma.mk -t split_rtl uncommitted, reproducibility) and templatize.
+
+**(superseded — aligned multi-tile now works) earlier note:** the address plane —
 tiled strided source reads in (col-tile,row-tile,row) order + transposed-stride
 destination writes (routing-plan §4, NumDim=4 ND program; needs the ND midend in
 the backend flow or strided legalizer addressing) + `strb_o→wstrb` edge masking
