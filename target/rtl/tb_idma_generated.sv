@@ -497,7 +497,7 @@ module tb_idma_backend_rw_axi import idma_pkg::*; #(
                     end
                 end
             if (errs == 0) $display("[TP] PASS: %0dx%0d single-tile transpose matches golden", NE, NE);
-            else           $display("[TP] FAIL: %0d mismatches", errs);
+            else           $fatal(1, "[TP] FAIL: %0d mismatches", errs);
             #100ns;
             $finish();
         end
