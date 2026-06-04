@@ -15,6 +15,10 @@
 // 1->2B (fp16), 2->4B (fp32). With E = 2^transp_mode bytes, the bus carries
 // NE = StrbWidth/E elements per beat and the engine buffers a NE x NE element
 // tile (worst case E=1 -> StrbWidth x StrbWidth bytes).
+// transp_mode_i==2'b11 (E=8) is RESERVED: the geometry assumes E<=StrbWidth
+// (i.e. mode<=LaneW), so mode==3 is only meaningful for StrbWidth>=8 and yields
+// a negative `LaneW-transp_mode_i` shift (undefined NE) below that. Drivers must
+// not emit mode==3 unless StrbWidth>=8; behaviour is otherwise undefined.
 //
 // Full-duplex: two FF tile banks form a ping-pong double buffer. The producer
 // fills one bank row-by-row while the consumer drains the other bank

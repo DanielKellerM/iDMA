@@ -108,13 +108,32 @@ Also: B1 idma.mk `-t split_rtl` still UNCOMMITTED (dependency-locked to rt) → 
   backend TB has no ND midend; `jobs/backend_rw_axi/*.txt` are 1D triples. A
   single `NE×NE` tile transpose (contiguous src→dst) IS backend-verifiable
   (Step 4); multi-tile needs the NumDim=4 stride program → ND-midend in the TB or
-  hand-built multi-burst jobs (Step 5+). Decide explicitly at Step 4.
+  hand-built multi-burst jobs (Step 5+). ✅ discharged via `tb_idma_transpose_nd`.
+  NOTE (GAP-1, audit C): the stock jobs golden `idma_model.transfer()`
+  (`test/idma_test.sv`) is a LINEAR-COPY model — it takes only length/src/dst/
+  protocol/burst and **structurally cannot represent a transpose**. So transpose
+  is verified with transpose-specific goldens (in-band `+transpose_test` single
+  tile; `tb_idma_transpose_nd` multi-tile/edge), reusing the jobs *driver* + AXI
+  sim-mem plumbing, NOT the stock job-file + model-golden pipeline. Honest scope:
+  "verified on the sim infrastructure with a transpose golden", not "via stock
+  job files".
 - **G4 — data-plane splice pending:** engine instantiation, `clear_i` pulse,
   `strb_o→wstrb`, per-transfer `decouple_rw`, last-response-on-write, busy
   aggregation. None may be silently skipped (Steps 2–4).
-- **G5 — `transp_mode == 2'b11` unguarded** (→ E=8, invalid geometry). Add an
-  assertion (engine or legalizer) `transp_mode != 2'b11 when transpose_en`, or
-  document the reserved encoding. Address when wiring the engine.
+- **G5 — `transp_mode == 2'b11` (E=8) RESERVED.** ✅ documented as a reserved
+  encoding (engine header + routing-plan): geometry assumes `E ≤ StrbWidth`
+  (`mode ≤ LaneW`), so mode 3 is only meaningful for `StrbWidth ≥ 8` and yields a
+  negative `LaneW−mode` shift (undefined `NE`) below that. Per the no-workaround
+  rule we do NOT add a guard-assertion (assertions to reject inputs are
+  workarounds); a reserved 2-bit encoding with documented "do not emit" is the
+  correct treatment. A future driver/CSR layer is the right place to refuse it.
+- **G8 — all-padding-row `AW`s to out-of-range addresses (audit B).** For
+  `N % NE != 0` the engine drains `NT·NE` rows; the all-padding rows `[N, NT·NE)`
+  issue real `AW`s with `wstrb = 0`. A permissive slave writes nothing, but a
+  strict slave may `DECERR` on the address decode. Mitigation (documented in
+  routing-plan §4.2): `dst` must be allocated for the full `NT·NE × MP` extent —
+  a hard requirement, not optional. Future hardening: suppress `AW` issuance for
+  all-padding rows so under-allocation is safe.
 - **G6 — frontends not wired.** Transpose is reachable ONLY via the backend-TB
   `opt` drive, never from reg/desc64/inst64. Acceptable while the goal is
   backend-TB verification. Plan §2 lists insertion points; includes the M/N

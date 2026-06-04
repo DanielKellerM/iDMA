@@ -256,19 +256,28 @@ lets the read machine run a tile ahead while the engine buffers (§5.2).
    height. (For aligned `M = YT·NE` the two forms coincide.)
 
 **Allocation / liveness obligations for a real driver (sim satisfies these):**
-- `dst` must be allocated for the padded extent `N × MP` (and, for `N % NE != 0`,
-  the all-padding `Aᵀ` rows `[N, NT·NE)` are addressed by `AW`s carrying
-  `wstrb = 0` — see §4.3; either over-allocate to `NT·NE` rows or rely on the
-  zero-strobe beats writing nothing).
+- **`dst` MUST be allocated for the FULL tile-padded extent `NT·NE × MP` elements**
+  (not just `N × MP`). This is a hard requirement, not an optimization. When
+  `N % NE != 0` the engine drains `NT·NE` output-row beats and the all-padding
+  rows `[N, NT·NE)` are issued as real `AW`s (correct addr+len) carrying
+  `wstrb = 0` (§4.3). A permissive slave (e.g. `axi_sim_mem`) writes nothing for
+  them, but **a strict slave decodes the `AW` address *before* the strobes — an
+  under-allocated `dst` therefore risks `DECERR` on those rows**, surfaced as a
+  transfer error. The real data is the `[0, N) × [0, M)` sub-block of the padded
+  buffer. (A future hardening could suppress `AW` issuance for all-padding rows
+  so under-allocation is safe; until then, over-allocation is mandatory.)
 - `src` reads extend up to row `YT·NE−1`, col `NT·NE−1` (tile padding); the
   source buffer must cover that or the reads must be benign (masked on write).
 - **`NumAxInFlight ≥ NE`.** The engine must buffer a whole `NE`-beat tile before
   its first output beat, and the backend holds one transaction slot per single-beat
-  burst from `AR` until `B`; so `NE` bursts sit read-done/write-pending at once.
-  With runtime `E`, `NE = SW` in the worst case (`E=1`), so a backend that must
-  serve int8 transpose needs **synth-time `NumAxInFlight ≥ StrbWidth`**. Below the
-  threshold the write channel deadlocks (empirically `NE−1` is the boundary;
-  use `≥ NE`). Verified by sweep in `test/tb_idma_transpose_nd.sv` (param
+  burst from `AR` until `B`; so `NE−1` bursts sit read-done/write-pending while the
+  `NE`-th completes. The tight deadlock boundary is therefore `NumAxInFlight ≥ NE−1`
+  (measured: `NE=8`→`≥7`, `NE=4`→`≥3`); the bound scales with `NE`, not buffer
+  depth (`BufferDepth` does not move it). Use `≥ NE` for a one-slot margin and a
+  clean rule. With runtime `E`, `NE = SW` in the worst case (`E=1`), so a backend
+  that must serve int8 transpose needs **synth-time `NumAxInFlight ≥ StrbWidth`**.
+  Below the threshold the write channel deadlocks *loudly* (W watchdog), never
+  silently. Verified by sweep in `test/tb_idma_transpose_nd.sv` (param
   `NumAxInFlight`, auto-sized to `StrbWidth`).
 
 ### 4.3 `strb_o → wstrb` — the load-bearing RTL change (IMPLEMENTED)
