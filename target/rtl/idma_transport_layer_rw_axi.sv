@@ -221,8 +221,38 @@ module idma_transport_layer_rw_axi #(
         byte_t [StrbWidth-1:0] tp_data_o;
         strb_t                 tp_strb_o;
 
+        // Latch the transpose config per transfer. w_dp_req_i is only valid while
+        // w_dp_valid_i; the FIFO output is X between transfers. Reset to 0 so the
+        // engine is cleanly bypassed at idle (no X into the bypass mux) and the
+        // config is held across the burst (w_dp_valid_i drops mid-burst).
+        logic        latched_tp_en_q;
+        logic [1:0]  latched_tp_mode_q;
+        logic [11:0] latched_m_q, latched_n_q;
+        logic        eff_tp_en;
+        logic [1:0]  eff_tp_mode;
+        logic [11:0] eff_m, eff_n;
+
+        always_ff @(posedge clk_i or negedge rst_ni) begin
+            if (!rst_ni) begin
+                latched_tp_en_q   <= 1'b0;
+                latched_tp_mode_q <= '0;
+                latched_m_q       <= '0;
+                latched_n_q       <= '0;
+            end else if (w_dp_valid_i) begin
+                latched_tp_en_q   <= w_dp_req_i.transpose_en;
+                latched_tp_mode_q <= w_dp_req_i.transp_mode;
+                latched_m_q       <= w_dp_req_i.tensor_m;
+                latched_n_q       <= w_dp_req_i.tensor_n;
+            end
+        end
+
+        assign eff_tp_en   = w_dp_valid_i ? w_dp_req_i.transpose_en : latched_tp_en_q;
+        assign eff_tp_mode = w_dp_valid_i ? w_dp_req_i.transp_mode  : latched_tp_mode_q;
+        assign eff_m       = w_dp_valid_i ? w_dp_req_i.tensor_m     : latched_m_q;
+        assign eff_n       = w_dp_valid_i ? w_dp_req_i.tensor_n     : latched_n_q;
+
         // runtime arm: engine only used when this transfer requests transpose
-        assign tp_active    = w_dp_req_i.transpose_en;
+        assign tp_active    = eff_tp_en;
         // beat-level handshake reassembled from the per-lane buffer interface
         assign tp_in_valid  = tp_active & (&buffer_out_valid);
         assign tp_out_ready = |buffer_out_ready;   // write manager popped the beat
@@ -230,24 +260,25 @@ module idma_transport_layer_rw_axi #(
         idma_otf_transpose #(
             .StrbWidth ( StrbWidth )
         ) i_idma_otf_transpose (
-            .clk_i           ( clk_i                   ),
-            .rst_ni          ( rst_ni                  ),
-            .clear_i         ( ~tp_active              ),
-            .transp_mode_i   ( w_dp_req_i.transp_mode  ),
-            .tensor_size_m_i ( w_dp_req_i.tensor_m     ),
-            .tensor_size_n_i ( w_dp_req_i.tensor_n     ),
-            .data_i          ( buffer_out              ),
-            .valid_i         ( tp_in_valid             ),
-            .ready_o         ( tp_in_ready             ),
-            .data_o          ( tp_data_o               ),
-            .strb_o          ( tp_strb_o               ),
-            .valid_o         ( tp_out_valid            ),
-            .ready_i         ( tp_out_ready            )
+            .clk_i           ( clk_i        ),
+            .rst_ni          ( rst_ni       ),
+            .clear_i         ( ~tp_active   ),
+            .transp_mode_i   ( eff_tp_mode  ),
+            .tensor_size_m_i ( eff_m        ),
+            .tensor_size_n_i ( eff_n        ),
+            .data_i          ( buffer_out   ),
+            .valid_i         ( tp_in_valid  ),
+            .ready_o         ( tp_in_ready  ),
+            .data_o          ( tp_data_o    ),
+            .strb_o          ( tp_strb_o    ),
+            .valid_o         ( tp_out_valid ),
+            .ready_i         ( tp_out_ready )
         );
 
         assign wr_data           = tp_active ? tp_data_o : buffer_out;
         assign wr_valid          = tp_active ? (tp_out_valid ? tp_strb_o : '0) : buffer_out_valid;
-        assign dataflow_ready_in = tp_active ? {StrbWidth{tp_in_ready}} : buffer_out_ready_shifted;
+        // pop the whole beat only on a real engine input handshake (avoids empty-pop)
+        assign dataflow_ready_in = tp_active ? {StrbWidth{tp_in_valid & tp_in_ready}} : buffer_out_ready_shifted;
     end else begin : gen_no_transpose
         assign wr_data           = buffer_out;
         assign wr_valid          = buffer_out_valid;

@@ -8,3 +8,5 @@ include
 !idma_backend_rw_axi.sv
 !idma_legalizer_rw_axi.sv
 !idma_transport_layer_rw_axi.sv
+# Bundled TB carrying the +transpose_test sequence (prototype).
+!tb_idma_generated.sv
