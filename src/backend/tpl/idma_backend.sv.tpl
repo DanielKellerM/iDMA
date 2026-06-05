@@ -231,6 +231,7 @@ _rsp_t ${protocol}_write_rsp_i,
         offset_t             shift;
         axi_pkg::len_t       num_beats;
         logic                is_single;
+        idma_pkg::compute_options_t compute;
     } w_dp_req_t;
 
     /// The datapath write response type provides feedback from the write part of the datapath:
@@ -290,6 +291,7 @@ _rsp_t ${protocol}_write_rsp_i,
         idma_pkg::axi_options_t src_axi_opt;
         idma_pkg::axi_options_t dst_axi_opt;
         logic                   super_last;
+        idma_pkg::compute_options_t compute;
     } idma_mut_tf_opt_t;
 
     /// The mutable transfer type holds important information that is mutated by the
@@ -483,7 +485,8 @@ _rsp_t ${protocol}_write_rsp_i,
             tailer:    OffsetWidth'(idma_req_i.length + idma_req_i.dst_addr[OffsetWidth-1:0]),
             shift:     OffsetWidth'(- idma_req_i.dst_addr[OffsetWidth-1:0]),
             num_beats: len,
-            is_single: len == '0
+            is_single: len == '0,
+            compute:   idma_req_i.opt.compute
         };
 
         // if the legalizer is bypassed; every burst is the last of the 1D transfer
@@ -694,6 +697,7 @@ _rsp_t ${protocol}_write_rsp_i,
         .BufferDepth                 ( BufferDepth                 ),
         .MaskInvalidData             ( MaskInvalidData             ),
         .PrintFifoInfo               ( PrintFifoInfo               ),
+        .EnableCompute               ( ${"1'b1" if enable_compute else "1'b0"} ),
         .r_dp_req_t                  ( r_dp_req_t                  ),
         .w_dp_req_t                  ( w_dp_req_t                  ),
         .r_dp_rsp_t                  ( r_dp_rsp_t                  ),

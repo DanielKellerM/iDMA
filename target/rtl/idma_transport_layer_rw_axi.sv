@@ -141,14 +141,10 @@ module idma_transport_layer_rw_axi #(
     // aligned and coalesced data leaving the buffer
     byte_t [2*StrbWidth-1:0] buffer_out_tmp;
     byte_t [StrbWidth-1:0] buffer_out, buffer_out_shifted;
-
-    // write seam (muxed: passthrough or transpose engine) feeding the write shifter
+    // compute write seam (passthrough unless EnableCompute)
     byte_t [StrbWidth-1:0] wr_data;
-    strb_t                 wr_valid;          // byte presence into the write manager
-    strb_t                 wr_strb;           // engine wstrb mask (narrows the write)
-    strb_t                 dataflow_ready_in;
-    strb_t                 mask_ext_shifted;  // wr_strb after the write barrel shift
-    logic                  w_beat_done;       // write manager accepted a beat
+    strb_t                 wr_valid, wr_strb, mask_ext_shifted, dataflow_ready_in;
+    logic                  w_beat_done;
 
     //--------------------------------------
     // Read Ports
@@ -262,7 +258,6 @@ module idma_transport_layer_rw_axi #(
     assign buffer_out_tmp           = {wr_data, wr_data} >> (w_dp_req_i.shift*8);
     assign buffer_out_shifted       = buffer_out_tmp[$bits(buffer_out_shifted)/8-1:0];
     assign buffer_out_valid_shifted = strb_t'({wr_valid, wr_valid} >>   w_dp_req_i.shift);
-    // engine wstrb mask shifted identically to data, so it stays byte-aligned
     assign mask_ext_shifted         = strb_t'({wr_strb, wr_strb} >>   w_dp_req_i.shift);
     assign buffer_out_ready_shifted = strb_t'({buffer_out_ready, buffer_out_ready} >> - w_dp_req_i.shift);
 

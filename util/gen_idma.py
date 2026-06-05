@@ -44,6 +44,8 @@ def main():
     parser.add_argument('--entity', choices=sorted(GENABLE_ENTITIES), dest='entity', required=True,
         help='The entity to generate from a given configuration.')
     parser.add_argument('--ids', dest='ids', nargs='*', help='configuration IDs')
+    parser.add_argument('--compute-ids', dest='compute_ids', nargs='*', default=[],
+        help='configuration IDs with on-the-fly compute enabled (IDMA_VIDMA_IDS)')
     parser.add_argument('--fids', dest='fids', nargs='*', help='frontend IDs')
     parser.add_argument('--db', dest='db', nargs='*', help='Database files')
     parser.add_argument('--tpl', dest='tpl', required=True, help='Template file')
@@ -60,7 +62,7 @@ def main():
     elif args.entity == 'legalizer':
         print(render_legalizer(protocol_ids, protocol_db, args.tpl))
     elif args.entity == 'backend':
-        print(render_backend(protocol_ids, protocol_db, args.tpl))
+        print(render_backend(protocol_ids, protocol_db, args.tpl, args.compute_ids))
     elif args.entity == 'vsim_wave':
         print(render_vsim_wave(protocol_ids, protocol_db, args.tpl))
     elif args.entity == 'synth_wrapper':

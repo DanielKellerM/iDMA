@@ -12,9 +12,10 @@ from mako.template import Template
 from mario.util import eval_key, prot_key
 
 
-def render_backend(prot_ids: dict, db: dict, tpl_file: str) -> str:
+def render_backend(prot_ids: dict, db: dict, tpl_file: str, compute_ids: list = None) -> str:
     """Generate backend"""
     backend_rendered = ''
+    compute_ids = compute_ids or []
 
     with open(tpl_file, 'r', encoding='utf-8') as templ_file:
         backend_tpl = templ_file.read()
@@ -30,6 +31,11 @@ def render_backend(prot_ids: dict, db: dict, tpl_file: str) -> str:
         srp = len(used_read_prots) == 1
         swp = len(used_write_prots) == 1
 
+        # on-the-fly compute is hosted at the (single) AXI write seam
+        enable_compute = prot_id in compute_ids
+        if enable_compute and not (swp and used_write_prots[0] == 'axi'):
+            raise ValueError(f'compute (IDMA_VIDMA_IDS) requires a single AXI write port: {prot_id}')
+
         # create context
         context = {
             'name_uniqueifier': prot_id,
@@ -39,6 +45,7 @@ def render_backend(prot_ids: dict, db: dict, tpl_file: str) -> str:
             'used_protocols': prot_ids[prot_id]['used'],
             'one_read_port': srp,
             'one_write_port': swp,
+            'enable_compute': enable_compute,
             'used_non_bursting_write_protocols':
                 prot_key(used_write_prots, 'bursts', 'not_supported', db),
             'combined_aw_and_w':
