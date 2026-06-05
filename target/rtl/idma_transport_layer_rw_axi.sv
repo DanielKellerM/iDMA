@@ -23,8 +23,11 @@ module idma_transport_layer_rw_axi #(
     parameter bit MaskInvalidData = 1'b1,
     /// Print the info of the FIFO configuration
     parameter bit PrintFifoInfo = 1'b0,
-    /// Instantiate the on-the-fly transpose engine at the write seam
-    parameter bit EnableTranspose = 1'b0,
+    /// Instantiate the on-the-fly compute dispatcher at the write seam.
+    /// When 0, this module is bit-identical to upstream (zero compute area).
+    parameter bit EnableCompute = 1'b0,
+    /// Compute sub-units compiled into the dispatcher (only when EnableCompute)
+    parameter bit EnableTranspose = 1'b1,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
     /// `w_dp_req_t` type:
@@ -214,81 +217,47 @@ module idma_transport_layer_rw_axi #(
     );
 
     //--------------------------------------
-    // On-the-fly transpose engine (write seam) — bypassed unless transpose_en
+    // On-the-fly compute dispatcher (write seam) — bypassed unless EnableCompute
     //--------------------------------------
 
-    if (EnableTranspose) begin : gen_transpose
-        logic                  tp_active;
-        logic                  tp_in_valid, tp_in_ready;
-        logic                  tp_out_valid, tp_out_ready;
-        byte_t [StrbWidth-1:0] tp_data_o;
-        strb_t                 tp_strb_o;
+    if (EnableCompute) begin : gen_compute
+        logic                  cmp_active;
+        logic                  cmp_in_ready, cmp_out_valid;
+        byte_t [StrbWidth-1:0] cmp_data_o;
+        strb_t                 cmp_strb_o;
 
-        // Latch the transpose config per transfer. w_dp_req_i is only valid while
-        // w_dp_valid_i; the FIFO output is X between transfers. Reset to 0 so the
-        // engine is cleanly bypassed at idle (no X into the bypass mux) and the
-        // config is held across the burst (w_dp_valid_i drops mid-burst).
-        logic        latched_tp_en_q;
-        logic [1:0]  latched_tp_mode_q;
-        logic [11:0] latched_m_q, latched_n_q;
-        logic        eff_tp_en;
-        logic [1:0]  eff_tp_mode;
-        logic [11:0] eff_m, eff_n;
-
-        always_ff @(posedge clk_i or negedge rst_ni) begin
-            if (!rst_ni) begin
-                latched_tp_en_q   <= 1'b0;
-                latched_tp_mode_q <= '0;
-                latched_m_q       <= '0;
-                latched_n_q       <= '0;
-            end else if (w_dp_valid_i) begin
-                latched_tp_en_q   <= w_dp_req_i.transpose_en;
-                latched_tp_mode_q <= w_dp_req_i.transp_mode;
-                latched_m_q       <= w_dp_req_i.tensor_m;
-                latched_n_q       <= w_dp_req_i.tensor_n;
-            end
-        end
-
-        assign eff_tp_en   = w_dp_valid_i ? w_dp_req_i.transpose_en : latched_tp_en_q;
-        assign eff_tp_mode = w_dp_valid_i ? w_dp_req_i.transp_mode  : latched_tp_mode_q;
-        assign eff_m       = w_dp_valid_i ? w_dp_req_i.tensor_m     : latched_m_q;
-        assign eff_n       = w_dp_valid_i ? w_dp_req_i.tensor_n     : latched_n_q;
-
-        // runtime arm: engine only used when this transfer requests transpose
-        assign tp_active    = eff_tp_en;
-        // beat-level handshake reassembled from the per-lane buffer interface
-        assign tp_in_valid  = tp_active & (&buffer_out_valid);
-        // engine beat retires when the write manager accepts the beat (strobe-
-        // independent, so all-padding edge beats with wstrb=0 still drain)
-        assign tp_out_ready = w_beat_done;
-
-        idma_otf_transpose #(
-            .StrbWidth ( StrbWidth )
-        ) i_idma_otf_transpose (
-            .clk_i           ( clk_i        ),
-            .rst_ni          ( rst_ni       ),
-            .clear_i         ( ~tp_active   ),
-            .transp_mode_i   ( eff_tp_mode  ),
-            .tensor_size_m_i ( eff_m        ),
-            .tensor_size_n_i ( eff_n        ),
-            .data_i          ( buffer_out   ),
-            .valid_i         ( tp_in_valid  ),
-            .ready_o         ( tp_in_ready  ),
-            .data_o          ( tp_data_o    ),
-            .strb_o          ( tp_strb_o    ),
-            .valid_o         ( tp_out_valid ),
-            .ready_i         ( tp_out_ready )
+        // The dispatcher latches the per-transfer config internally and selects
+        // one op; the transport stays a thin beat-reassembly + seam mux. The
+        // engine beat retires on w_beat_done (strobe-independent, so all-padding
+        // edge beats with wstrb=0 still drain).
+        idma_otf_compute #(
+            .StrbWidth       ( StrbWidth       ),
+            .EnableTranspose ( EnableTranspose )
+        ) i_idma_otf_compute (
+            .clk_i,
+            .rst_ni,
+            .compute_i   ( w_dp_req_i.compute ),
+            .cfg_valid_i ( w_dp_valid_i        ),
+            .active_o    ( cmp_active          ),
+            .data_i      ( buffer_out          ),
+            .valid_i     ( &buffer_out_valid   ),
+            .in_ready_o  ( cmp_in_ready        ),
+            .data_o      ( cmp_data_o          ),
+            .strb_o      ( cmp_strb_o          ),
+            .valid_o     ( cmp_out_valid       ),
+            .ready_i     ( w_beat_done         )
         );
 
-        assign wr_data           = tp_active ? tp_data_o : buffer_out;
-        // presence = whole beat present when the engine holds a registered output;
+        assign wr_data           = cmp_active ? cmp_data_o : buffer_out;
+        // presence = whole beat present when the dispatcher holds an output;
         // wstrb (edge masking) is carried separately via wr_strb so all-padding
         // beats (engine strobe 0) still present as a valid beat and drain cleanly
-        assign wr_valid          = tp_active ? {StrbWidth{tp_out_valid}} : buffer_out_valid;
-        assign wr_strb           = tp_active ? tp_strb_o : '1;
-        // pop the whole beat only on a real engine input handshake (avoids empty-pop)
-        assign dataflow_ready_in = tp_active ? {StrbWidth{tp_in_valid & tp_in_ready}} : buffer_out_ready_shifted;
-    end else begin : gen_no_transpose
+        assign wr_valid          = cmp_active ? {StrbWidth{cmp_out_valid}} : buffer_out_valid;
+        assign wr_strb           = cmp_active ? cmp_strb_o : '1;
+        // pop the whole beat only on a real compute input handshake (avoids empty-pop)
+        assign dataflow_ready_in = cmp_active ? {StrbWidth{(&buffer_out_valid) & cmp_in_ready}}
+                                              : buffer_out_ready_shifted;
+    end else begin : gen_no_compute
         assign wr_data           = buffer_out;
         assign wr_valid          = buffer_out_valid;
         assign wr_strb           = '1;

@@ -278,8 +278,8 @@ module idma_legalizer_rw_axi #(
                 dst_protocol:   req_i.opt.dst_protocol,
                 read_shift:     '0,
                 write_shift:    '0,
-                decouple_rw:    req_i.opt.beo.decouple_rw | req_i.opt.transpose_en,
-                decouple_aw:    req_i.opt.beo.decouple_aw | req_i.opt.transpose_en,
+                decouple_rw:    req_i.opt.beo.decouple_rw | req_i.opt.compute.enable,
+                decouple_aw:    req_i.opt.beo.decouple_aw | req_i.opt.compute.enable,
                 src_max_llen:   req_i.opt.beo.src_max_llen,
                 dst_max_llen:   req_i.opt.beo.dst_max_llen,
                 src_reduce_len: req_i.opt.beo.src_reduce_len,
@@ -288,10 +288,7 @@ module idma_legalizer_rw_axi #(
                 src_axi_opt:    req_i.opt.src,
                 dst_axi_opt:    req_i.opt.dst,
                 super_last:     req_i.opt.last,
-                transpose_en:   req_i.opt.transpose_en,
-                transp_mode:    req_i.opt.transp_mode,
-                tensor_m:       req_i.opt.tensor_m,
-                tensor_n:       req_i.opt.tensor_n
+                compute:        req_i.opt.compute
             };
             // determine shift amount
             if (CombinedShifter) begin
@@ -360,10 +357,7 @@ module idma_legalizer_rw_axi #(
             shift: opt_tf_q.write_shift,
             num_beats: w_req_o.aw_req.axi.aw_chan.len,
             is_single: w_req_o.aw_req.axi.aw_chan.len == '0,
-            transpose_en: opt_tf_q.transpose_en,
-            transp_mode: opt_tf_q.transp_mode,
-            tensor_m: opt_tf_q.tensor_m,
-            tensor_n: opt_tf_q.tensor_n
+            compute: opt_tf_q.compute
         };
         
     end

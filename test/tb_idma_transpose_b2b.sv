@@ -156,10 +156,11 @@ module tb_idma_transpose_b2b
     nd_req.burst_req.opt.dst.burst    = axi_pkg::BURST_INCR;
     nd_req.burst_req.opt.beo.decouple_rw = 1'b1;
     nd_req.burst_req.opt.beo.decouple_aw = 1'b1;
-    nd_req.burst_req.opt.transpose_en = 1'b1;
-    nd_req.burst_req.opt.transp_mode  = 2'(MODE);
-    nd_req.burst_req.opt.tensor_m     = 12'(M);
-    nd_req.burst_req.opt.tensor_n     = 12'(N);
+    nd_req.burst_req.opt.compute.enable                  = 1'b1;
+    nd_req.burst_req.opt.compute.op                      = idma_pkg::COMPUTE_TRANSPOSE;
+    nd_req.burst_req.opt.compute.params.transpose.mode     = 2'(MODE);
+    nd_req.burst_req.opt.compute.params.transpose.tensor_m = 12'(M);
+    nd_req.burst_req.opt.compute.params.transpose.tensor_n = 12'(N);
     nd_req.burst_req.opt.last         = 1'b1;
     nd_req.d_req[0].reps = reps_t'(NE); nd_req.d_req[0].src_strides = addr_t'(int'(N*EB));                       nd_req.d_req[0].dst_strides = addr_t'(int'(MP*EB));
     nd_req.d_req[1].reps = reps_t'(YT); nd_req.d_req[1].src_strides = addr_t'(int'(N*EB));                       nd_req.d_req[1].dst_strides = addr_t'(int'(NE*EB) - int'((NE-1)*MP*EB));

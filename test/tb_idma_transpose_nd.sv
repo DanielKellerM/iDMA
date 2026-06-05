@@ -207,10 +207,11 @@ module tb_idma_transpose_nd
     nd_req.burst_req.opt.beo.decouple_aw = 1'b1;
     nd_req.burst_req.opt.beo.src_max_llen = '0;
     nd_req.burst_req.opt.beo.dst_max_llen = '0;
-    nd_req.burst_req.opt.transpose_en = 1'b1;
-    nd_req.burst_req.opt.transp_mode  = 2'(MODE);
-    nd_req.burst_req.opt.tensor_m     = 12'(M);
-    nd_req.burst_req.opt.tensor_n     = 12'(N);
+    nd_req.burst_req.opt.compute.enable                  = 1'b1;
+    nd_req.burst_req.opt.compute.op                      = idma_pkg::COMPUTE_TRANSPOSE;
+    nd_req.burst_req.opt.compute.params.transpose.mode     = 2'(MODE);
+    nd_req.burst_req.opt.compute.params.transpose.tensor_m = 12'(M);
+    nd_req.burst_req.opt.compute.params.transpose.tensor_n = 12'(N);
     nd_req.burst_req.opt.last         = 1'b1;
     // ND midend strides are INCREMENTAL (added on each dim roll-over, inner dims
     // reset), so they are deltas, not absolute per-dim steps.

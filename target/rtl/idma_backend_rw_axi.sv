@@ -170,10 +170,7 @@ module idma_backend_rw_axi #(
         offset_t             shift;
         axi_pkg::len_t       num_beats;
         logic                is_single;
-        logic                transpose_en;
-        logic [1:0]          transp_mode;
-        logic [11:0]         tensor_m;
-        logic [11:0]         tensor_n;
+        idma_pkg::compute_options_t compute;
     } w_dp_req_t;
 
     /// The datapath write response type provides feedback from the write part of the datapath:
@@ -221,10 +218,7 @@ module idma_backend_rw_axi #(
         idma_pkg::axi_options_t src_axi_opt;
         idma_pkg::axi_options_t dst_axi_opt;
         logic                   super_last;
-        logic                   transpose_en;
-        logic [1:0]             transp_mode;
-        logic [11:0]            tensor_m;
-        logic [11:0]            tensor_n;
+        idma_pkg::compute_options_t compute;
     } idma_mut_tf_opt_t;
 
     /// The mutable transfer type holds important information that is mutated by the
@@ -405,10 +399,7 @@ module idma_backend_rw_axi #(
             shift:     OffsetWidth'(- idma_req_i.dst_addr[OffsetWidth-1:0]),
             num_beats: len,
             is_single: len == '0,
-            transpose_en: idma_req_i.opt.transpose_en,
-            transp_mode:  idma_req_i.opt.transp_mode,
-            tensor_m:     idma_req_i.opt.tensor_m,
-            tensor_n:     idma_req_i.opt.tensor_n
+            compute:   idma_req_i.opt.compute
         };
 
         // if the legalizer is bypassed; every burst is the last of the 1D transfer
@@ -593,6 +584,7 @@ module idma_backend_rw_axi #(
         .BufferDepth                 ( BufferDepth                 ),
         .MaskInvalidData             ( MaskInvalidData             ),
         .PrintFifoInfo               ( PrintFifoInfo               ),
+        .EnableCompute               ( 1'b1                        ),
         .EnableTranspose             ( 1'b1                        ),
         .r_dp_req_t                  ( r_dp_req_t                  ),
         .w_dp_req_t                  ( w_dp_req_t                  ),
