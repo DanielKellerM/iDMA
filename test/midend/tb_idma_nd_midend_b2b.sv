@@ -5,13 +5,10 @@
 // Authors:
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
 //
-// Focused regression for back-to-back ND transfers through idma_nd_midend.
-// Drives the midend directly (no backend/memory) and golden-checks the
-// burst_req address sequence: two transfers issued back-to-back (no idle gap)
-// MUST each walk from their OWN base, and a third transfer after an idle gap
-// must too. This isolates the base-address reload: if the midend reuses the
-// stale src/dst pointers from the previous transfer, transfer 2's first burst
-// (and the whole sequence) is offset and this test fails.
+// Back-to-back ND regression for idma_nd_midend. Drives the midend directly and
+// golden-checks the burst_req address sequence: two back-to-back transfers (no
+// gap) plus one after an idle gap must each walk from their own base. Catches a
+// stale base-address reuse across transfers.
 
 `include "idma/typedef.svh"
 
@@ -62,11 +59,8 @@ module tb_idma_nd_midend_b2b;
     .busy_o(busy)
   );
 
-  // Backpressure on burst_req_ready (the backend stalls the midend in reality).
-  // This matters: stage_clear is gated by burst_req_ready_i, so during a stall
-  // stride_sel_q (whose register is enabled by nd_req_valid_i, NOT ready)
-  // collapses toward 0 — which is exactly what can defeat the base-address reload
-  // at a transfer boundary. A regression with ready always 1 hides the bug.
+  // Backpressure on burst_req_ready is essential: during a stall stride_sel_q
+  // collapses toward 0, which is what can defeat the base reload. ready always-1 hides it.
   logic [2:0] bp_lfsr;
   always @(posedge clk or negedge rst_n)
     if (!rst_n) bp_lfsr <= 3'b101;

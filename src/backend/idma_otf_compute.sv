@@ -4,30 +4,14 @@
 
 // Authors:
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
-//
-// On-the-fly compute dispatcher for the iDMA transport write seam. Owns all
-// compute sub-units, latches the per-transfer `compute_options_t` (first-beat
-// bypass), and runtime-dispatches one op per transfer based on `compute.op`.
-// Presents a single beat-level stream interface to the transport so the seam
-// stays a thin latch+instance+mux regardless of how many ops exist.
-//
-// Adding an op: instantiate its sub-unit behind an `Enable<op>` parameter, add
-// its `compute.op` case to the output mux, and read its params from
-// `eff_compute.params.<op>` — the transport, legalizer and request types are
-// untouched (they thread `compute_options_t` whole).
-//
-// Sub-units must honour the uniform contract: byte-granular `data`/`strb`,
-// `valid_i`/`ready_o` on the (single-head) input beat, `valid_o`/`ready_i` on
-// the output beat, and `clear_i` to reset when not selected. Two-operand ops
-// belong to a 2-read backend variant (a second input head added there).
 
+/// On-the-fly compute dispatcher at the transport write seam: latches the
+/// per-transfer compute options and dispatches one op per transfer to its
+/// sub-unit. Per-op compile-in set lives on this module only.
 module idma_otf_compute #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter int unsigned StrbWidth       = 32'd8,
-  /// Per-op compile-in set: only enabled sub-units are instantiated. These live
-  /// HERE (defaulted; the generator overrides per variant) and are intentionally
-  /// NOT plumbed through the transport/backend port lists — adding an op adds an
-  /// `Enable<op>` here, never to a top module. Add new ops alongside this one.
+  /// Compile in the transpose sub-unit
   parameter bit          EnableTranspose = 1'b1
 ) (
   input  logic clk_i,
@@ -51,9 +35,7 @@ module idma_otf_compute #(
   input  logic                      ready_i
 );
 
-  // ── Per-transfer config latch (first-beat bypass) ──
-  // compute_i is only valid while cfg_valid_i; the upstream FIFO output is X
-  // between transfers. Reset/hold so the seam is cleanly bypassed at idle.
+  // per-transfer config latch with first-beat bypass (compute_i valid only on cfg_valid_i)
   idma_pkg::compute_options_t latched_q, eff_compute;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni)          latched_q <= '0;

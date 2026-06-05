@@ -5,12 +5,9 @@
 // Authors:
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
 //
-// End-to-end back-to-back transpose regression: issues TWO transposes of the
-// same source to DIFFERENT destination bases through idma_nd_midend ->
-// idma_backend_rw_axi (EnableTranspose) -> axi_sim_mem, with no reset between
-// them. If the midend reused a stale base address across transfers, the second
-// transpose would land at the wrong destination (its own dst stays sentinel) and
-// this test fails. Both transposes are checked against the golden + padding.
+// End-to-end back-to-back transpose regression: two transposes of one source to
+// DIFFERENT dst bases through the ND midend -> rw_axi backend -> axi_sim_mem. A
+// stale base across transfers would leave the second dst untouched. Both checked.
 
 `include "axi/typedef.svh"
 `include "idma/typedef.svh"

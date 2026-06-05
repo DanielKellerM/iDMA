@@ -5,40 +5,17 @@
 // Authors:
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
 //
-// On-the-fly matrix transpose engine for the iDMA transport layer, full-duplex
-// ping-pong variant. Transpose datapath adapted from the datamover/Ratha HWPE
-// (datamover_engine.sv, F. Conti et al.), re-expressed in iDMA conventions:
-// plain valid/ready, byte/strb ports matching the OTF compute seam (cf.
-// idma_alcu), no hwpe_stream/hci dependency.
+// On-the-fly matrix transpose engine for the iDMA transport write seam.
+// Full-duplex ping-pong (two FF tile banks); transpose datapath adapted from the
+// datamover/Ratha HWPE in plain valid/ready + byte/strb conventions.
 //
-// Element size is runtime-selectable via transp_mode_i: 0->1B (int8),
-// 1->2B (fp16), 2->4B (fp32). With E = 2^transp_mode bytes, the bus carries
-// NE = StrbWidth/E elements per beat and the engine buffers a NE x NE element
-// tile (worst case E=1 -> StrbWidth x StrbWidth bytes).
-// transp_mode_i is valid iff E<=StrbWidth, i.e. mode<=LaneW (mode 3 / E=8 needs
-// StrbWidth>=8). For mode>LaneW the unsigned `LaneW-transp_mode_i` WRAPS in 32b
-// (not a negative shift), which would otherwise give a silently-wrong geometry
-// and an out-of-range readout. The engine saturates the effective mode at LaneW
-// (eff_mode below) so an out-of-contract mode degrades to a defined NE=1
-// pass-through instead of X; drivers should still constrain transp_mode_i<=LaneW.
-//
-// Full-duplex: two FF tile banks form a ping-pong double buffer. The producer
-// fills one bank row-by-row while the consumer drains the other bank
-// transposed at element granularity (each E-byte element kept intact), so the
-// read and write streams progress concurrently (~1 beat/cyc/channel vs the
-// half-duplex baseline's 0.5). A 2-entry full/empty token arbitrates the banks.
-// The M x N matrix (dims in elements) is walked tile by tile; strb_o masks
-// partial edge tiles. Because fill and drain run on decoupled tile walkers,
-// each bank carries a shadow of its tile's edge flags so the drain strobe uses
-// the geometry of the tile actually being drained.
-//
-// The transposed output is registered (data_o/strb_o/valid_o) to cut the wide
-// element-aware readout mux out of the critical path; ready_int = ~valid_o |
-// ready_i keeps the stage full-throughput. The register is NOT flushed on
-// exec_done so the final beat survives until the consumer takes it.
+// Element size is runtime-selectable via transp_mode_i: 0/1/2 -> 1/2/4 B,
+// E = 1<<mode, NE = StrbWidth/E elements per tile side. mode>LaneW (E>StrbWidth)
+// is out of contract; the engine saturates the effective mode at LaneW (eff_mode).
 //
 // Contract: input padded to full tiles, fed (col-tile, row-tile, row) order;
-// out_T[nt*NE+k][rt*NE+r] = in[rt*NE+r][nt*NE+k]  (element coordinates).
+// out_T[nt*NE+k][rt*NE+r] = in[rt*NE+r][nt*NE+k] (element coords). strb_o masks
+// partial edge tiles. data_o/strb_o/valid_o are registered.
 
 module idma_otf_transpose #(
   /// Byte lanes per beat (= DataWidth/8)
@@ -74,9 +51,7 @@ module idma_otf_transpose #(
   logic [11:0]      y_tiles, n_tiles; // row-tiles, col-tiles
   logic [LaneW:0]   leftover_rows, leftover_cols;  // M%NE, N%NE (run-global)
 
-  // Saturate at LaneW so an out-of-contract mode (E>StrbWidth, e.g. mode 3 on a
-  // narrow bus) degrades to a defined NE=1 pass-through, never an unsigned-wrap /
-  // out-of-range readout. eff_mode == transp_mode_i for every valid mode.
+  // saturate at LaneW: out-of-contract mode (E>StrbWidth) degrades to NE=1, not X
   assign eff_mode      = (transp_mode_i > LaneW) ? LaneW[1:0] : transp_mode_i;
   assign ne_m1         = (1 << (LaneW - eff_mode)) - 1;            // NE-1
   assign log2_ne       = LaneW - eff_mode;

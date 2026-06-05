@@ -23,11 +23,7 @@ module idma_transport_layer_rw_axi #(
     parameter bit MaskInvalidData = 1'b1,
     /// Print the info of the FIFO configuration
     parameter bit PrintFifoInfo = 1'b0,
-    /// Instantiate the on-the-fly compute dispatcher at the write seam.
-    /// When 0, this module is bit-identical to upstream (zero compute area).
-    /// WHICH compute ops are compiled in is a dispatcher detail — configured on
-    /// `idma_otf_compute` (per-op `Enable*` defaults / generated overrides), not
-    /// a transport parameter, so adding ops never grows this port list.
+    /// Instantiate the on-the-fly compute dispatcher at the write seam
     parameter bit EnableCompute = 1'b0,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
@@ -227,12 +223,7 @@ module idma_transport_layer_rw_axi #(
         byte_t [StrbWidth-1:0] cmp_data_o;
         strb_t                 cmp_strb_o;
 
-        // The dispatcher latches the per-transfer config internally and selects
-        // one op; the transport stays a thin beat-reassembly + seam mux. The
-        // engine beat retires on w_beat_done (strobe-independent, so all-padding
-        // edge beats with wstrb=0 still drain).
-        // Per-op compile-in set lives here (idma_otf_compute defaults / generator
-        // overrides), NOT as transport parameters.
+        // beat retires on w_beat_done (strobe-independent: zero-strobe edge beats drain)
         idma_otf_compute #(
             .StrbWidth ( StrbWidth )
         ) i_idma_otf_compute (
@@ -250,10 +241,8 @@ module idma_transport_layer_rw_axi #(
             .ready_i     ( w_beat_done         )
         );
 
+        // presence = whole beat; edge masking rides wr_strb (separate from valid)
         assign wr_data           = cmp_active ? cmp_data_o : buffer_out;
-        // presence = whole beat present when the dispatcher holds an output;
-        // wstrb (edge masking) is carried separately via wr_strb so all-padding
-        // beats (engine strobe 0) still present as a valid beat and drain cleanly
         assign wr_valid          = cmp_active ? {StrbWidth{cmp_out_valid}} : buffer_out_valid;
         assign wr_strb           = cmp_active ? cmp_strb_o : '1;
         // pop the whole beat only on a real compute input handshake (avoids empty-pop)

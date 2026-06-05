@@ -81,38 +81,29 @@ package idma_pkg;
         logic       dst_reduce_len;
     } backend_options_t;
 
-    /// On-the-fly compute extension point ─────────────────────────────────────
-    /// One compute op per transfer is dispatched at the transport write seam.
-    /// `compute_op_e` selects the op; `enable` arms compute (drives decoupling);
-    /// `params` is a packed union holding the selected op's parameters (width =
-    /// max over ops, not sum). Adding an op = one enum value + one `params`
-    /// member + a sub-unit in `idma_otf_compute`; `options_t` is untouched.
-
-    /// Compute operation selector (widen the enum base as ops are added).
+    /// On-the-fly compute operation selector
     typedef enum logic [3:0] {
         COMPUTE_NONE      = 4'd0,
         COMPUTE_TRANSPOSE = 4'd1
     } compute_op_e;
 
-    /// Transpose op params: E = 1<<mode (0->1B int8, 1->2B fp16, 2->4B fp32);
-    /// `tensor_m`/`tensor_n` are matrix rows/cols in elements.
+    /// Transpose option type: E = 1<<mode (0/1/2 -> 1/2/4 B); tensor in elements
     typedef struct packed {
         logic [1:0]  mode;
         logic [11:0] tensor_m;
         logic [11:0] tensor_n;
     } transpose_options_t;
 
-    /// Per-op compute parameters (packed union; all members must be equal width
-    /// — pad the smaller when adding an op).
+    /// Per-op compute parameter union (members must be equal width)
     typedef union packed {
         transpose_options_t transpose;
     } compute_params_t;
 
-    /// Per-transfer compute options carried in `options_t`.
+    /// Compute option type: per-transfer on-the-fly compute selection
     typedef struct packed {
-        logic            enable;   // compute active this transfer (op != NONE)
-        compute_op_e     op;       // which op (valid when `enable`)
-        compute_params_t params;   // op-specific params, selected by `op`
+        logic            enable;
+        compute_op_e     op;
+        compute_params_t params;
     } compute_options_t;
 
     /// Supported Protocols

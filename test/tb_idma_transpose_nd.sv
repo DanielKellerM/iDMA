@@ -26,9 +26,7 @@ module tb_idma_transpose_nd
   parameter int unsigned M          = 8,   // matrix rows (elements)
   parameter int unsigned N          = 8,   // matrix cols (elements)
   parameter int unsigned EB         = 1,   // element size in bytes (1/2/4)
-  // 0 = auto: NumAxInFlight = StrbWidth (= worst-case NE at E=1). Transpose needs
-  // a full NE-beat tile buffered before its first write, and the backend holds a
-  // transaction slot per single-beat burst until B, so NumAxInFlight must be >= NE.
+  // 0 = auto: NumAxInFlight = StrbWidth (transpose needs >= NE in-flight; NE = StrbWidth at E=1)
   parameter int unsigned NumAxInFlight = 0,
   parameter int unsigned BufferDepth   = 3
 );
@@ -43,10 +41,7 @@ module tb_idma_transpose_nd
   localparam int unsigned MODE      = (EB == 4) ? 2 : (EB == 2) ? 1 : 0;
   localparam int unsigned YT        = (M + NE - 1) / NE;     // row-tiles
   localparam int unsigned NT        = (N + NE - 1) / NE;     // col-tiles
-  // Padded output row pitch (elements): M rounded up to a tile (= StrbWidth bytes)
-  // boundary. Aᵀ rows must start StrbWidth-aligned because the engine drains one
-  // beat per output row and the write path cannot coalesce a misaligned (split)
-  // beat after the engine. Equals M when M is a multiple of NE.
+  // padded Aᵀ row pitch: M rounded up to a tile so every row is StrbWidth-aligned
   localparam int unsigned MP        = YT * NE;
   localparam int unsigned NumDim    = 4;                     // 1D + {row, row-tile, col-tile}
   localparam logic [NumDim-1:0][31:0] RepWidths = '{default: 32'd16};
@@ -155,11 +150,8 @@ module tb_idma_transpose_nd
   addr_t sb = 'h0000_1000;
   addr_t db = 'h0000_4000;
 
-  // DECERR contract check: every AW (incl. the wstrb=0 all-padding rows) must
-  // land within the documented full tile-padded dst allocation [db, db+NT*NE*MP*EB).
-  // An AW outside it would DECERR on a strict slave that decodes the address
-  // before the strobes — this turns the over-allocation contract from documented
-  // into tested (fires non-vacuously if a stride sends an AW out of the region).
+  // every AW (incl. wstrb=0 padding rows) must stay in the padded dst allocation
+  // [db, db+NT*NE*MP*EB) — else a strict slave would DECERR
   always @(posedge clk) if (rst_n && axi_write_req.aw_valid && axi_write_rsp.aw_ready) begin
     automatic addr_t aw_end = db + addr_t'(NT*NE*MP*EB);
     if (axi_write_req.aw.addr < db || axi_write_req.aw.addr >= aw_end)
@@ -184,11 +176,8 @@ module tb_idma_transpose_nd
         for (int unsigned b = 0; b < EB; b++)
           wr_mem(sb + (r*N + c)*EB + b, 8'((( (r*N+c)*EB + b )*7 + 3) & 8'hFF));
 
-    // Pre-fill the FULL padded Aᵀ extent (NT*NE rows x MP cols) with a sentinel.
-    // Real elements get overwritten by the transpose; padding cols [M,MP) and
-    // padding rows [N,NT*NE) must stay sentinel — that is what the engine strobe
-    // (-> wstrb) is for. If the strobe were dropped, full beats would clobber the
-    // padding with transposed source data and the padding check below would fail.
+    // sentinel-fill the full padded Aᵀ extent; padding cols/rows must stay sentinel
+    // (the engine strobe suppresses them) — checked after the transfer
     for (int unsigned i = 0; i < NT*NE; i++)
       for (int unsigned j = 0; j < MP; j++)
         for (int unsigned b = 0; b < EB; b++)
@@ -213,12 +202,9 @@ module tb_idma_transpose_nd
     nd_req.burst_req.opt.compute.params.transpose.tensor_m = 12'(M);
     nd_req.burst_req.opt.compute.params.transpose.tensor_n = 12'(N);
     nd_req.burst_req.opt.last         = 1'b1;
-    // ND midend strides are INCREMENTAL (added on each dim roll-over, inner dims
-    // reset), so they are deltas, not absolute per-dim steps.
-    // Aᵀ is laid out with a PADDED row pitch MP*EB (= StrbWidth-aligned) so every
-    // output row write is single-beat. Source pitch stays N*EB: misaligned reads
-    // coalesce in the dataflow buffer (which sits before the engine), so only the
-    // write pitch needs alignment.
+    // ND midend strides are INCREMENTAL deltas (added on dim roll-over), NOT
+    // absolute pitches. Aᵀ uses padded pitch MP*EB (aligned writes); src keeps
+    // N*EB (misaligned reads coalesce in the pre-engine buffer).
     // d_req[0] = local row within tile (reps NE)
     nd_req.d_req[0].reps        = reps_t'(NE);
     nd_req.d_req[0].src_strides = addr_t'(int'(N*EB));                        // next source row
@@ -227,18 +213,15 @@ module tb_idma_transpose_nd
     nd_req.d_req[1].reps        = reps_t'(YT);
     nd_req.d_req[1].src_strides = addr_t'(int'(N*EB));                        // rows are consecutive
     nd_req.d_req[1].dst_strides = addr_t'(int'(NE*EB) - int'((NE-1)*MP*EB));  // back up cols, next col-block
-    // d_req[2] = col-tile (reps NT). src back-jump uses the PADDED row extent
-    // (YT*NE-1), not M-1: the read walks NE rows per tile incl. padding rows of
-    // the last row-tile, so the rewind must clear the full padded column.
+    // d_req[2] = col-tile (reps NT). src rewind uses the padded row extent
+    // (YT*NE-1, not M-1): the read walks padding rows of the last row-tile.
     nd_req.d_req[2].reps        = reps_t'(NT);
     nd_req.d_req[2].src_strides = addr_t'(int'(NE*EB) - int'((YT*NE-1)*N*EB)); // back to padded row0, next col-block
     nd_req.d_req[2].dst_strides = addr_t'(int'(MP*EB) - int'((YT-1)*NE*EB));   // next Aᵀ col-block
 
     $display("[TPN] launching %0dx%0d EB=%0d transpose via ND midend (NE=%0d, %0dx%0d tiles)", M, N, EB, NE, YT, NT);
     nd_req_valid = 1'b1;
-    // Drop valid the cycle the accept (nd_req_ready) is seen — do NOT hold it
-    // one cycle past, or the midend starts a spurious re-walk of the request
-    // (burst_req_valid_o follows nd_req_valid_i), corrupting a following transfer.
+    // drop valid on accept; holding it one cycle past makes the midend re-walk the request
     do @(posedge clk); while (!nd_req_ready);
     nd_req_valid = 1'b0;
     nd_req = '0;
@@ -247,8 +230,7 @@ module tb_idma_transpose_nd
     while (!(nd_rsp_valid && nd_rsp_ready)) @(posedge clk);
     repeat (20) @(posedge clk);
 
-    // check 1 (data): out_T[c][r] == in[r][c].  Aᵀ uses the padded row pitch MP, so
-    // the transposed element sits at dst[(c*MP + r)*EB + b]; src is the plain M×N matrix.
+    // check 1 (data): out_T[c][r] == in[r][c], Aᵀ at padded pitch MP
     for (int unsigned c = 0; c < N; c++)
       for (int unsigned r = 0; r < M; r++)
         for (int unsigned b = 0; b < EB; b++) begin
@@ -259,8 +241,7 @@ module tb_idma_transpose_nd
             if (errs <= 12) $display("[TPN] MISMATCH out_T[%0d][%0d].b%0d=%02h exp %02h", c, r, b, got, exp);
           end
         end
-    // check 2 (strobe load-bearing): every padding byte must still be the sentinel
-    // 0xCC — padding cols [M,MP) of real rows AND all bytes of padding rows [N,NT*NE).
+    // check 2: padding cols [M,MP) and padding rows [N,NT*NE) must stay sentinel (strobe-suppressed)
     for (int unsigned i = 0; i < NT*NE; i++)
       for (int unsigned j = 0; j < MP; j++)
         if (i >= N || j >= M)
