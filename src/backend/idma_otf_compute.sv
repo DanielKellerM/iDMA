@@ -24,7 +24,10 @@
 module idma_otf_compute #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter int unsigned StrbWidth       = 32'd8,
-  /// Compile-time per-op enables (only enabled sub-units are instantiated)
+  /// Per-op compile-in set: only enabled sub-units are instantiated. These live
+  /// HERE (defaulted; the generator overrides per variant) and are intentionally
+  /// NOT plumbed through the transport/backend port lists — adding an op adds an
+  /// `Enable<op>` here, never to a top module. Add new ops alongside this one.
   parameter bit          EnableTranspose = 1'b1
 ) (
   input  logic clk_i,

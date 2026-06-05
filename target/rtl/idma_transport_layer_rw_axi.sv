@@ -25,9 +25,10 @@ module idma_transport_layer_rw_axi #(
     parameter bit PrintFifoInfo = 1'b0,
     /// Instantiate the on-the-fly compute dispatcher at the write seam.
     /// When 0, this module is bit-identical to upstream (zero compute area).
+    /// WHICH compute ops are compiled in is a dispatcher detail — configured on
+    /// `idma_otf_compute` (per-op `Enable*` defaults / generated overrides), not
+    /// a transport parameter, so adding ops never grows this port list.
     parameter bit EnableCompute = 1'b0,
-    /// Compute sub-units compiled into the dispatcher (only when EnableCompute)
-    parameter bit EnableTranspose = 1'b1,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
     /// `w_dp_req_t` type:
@@ -230,9 +231,10 @@ module idma_transport_layer_rw_axi #(
         // one op; the transport stays a thin beat-reassembly + seam mux. The
         // engine beat retires on w_beat_done (strobe-independent, so all-padding
         // edge beats with wstrb=0 still drain).
+        // Per-op compile-in set lives here (idma_otf_compute defaults / generator
+        // overrides), NOT as transport parameters.
         idma_otf_compute #(
-            .StrbWidth       ( StrbWidth       ),
-            .EnableTranspose ( EnableTranspose )
+            .StrbWidth ( StrbWidth )
         ) i_idma_otf_compute (
             .clk_i,
             .rst_ni,
