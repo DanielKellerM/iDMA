@@ -115,6 +115,7 @@ sources:
       - src/midend/idma_mp_split_midend.sv
       - src/midend/idma_nd_midend.sv
       - src/midend/idma_rt_midend.sv
+      - src/midend/idma_transpose_midend.sv
 
   # RISC-V opcode package for ooc use of inst64
   - target: all(rtl,snitch_cluster)
@@ -143,6 +144,19 @@ sources:
       # Level 2
       - src/frontend/desc64/idma_desc64_top.sv
 
+  # Snitch inst64 standalone harness (recycled from the vidma fork). Needs the
+  # snitch_cluster target to pull idma_inst64_top + the opcode package.
+  - target: all(snitch_cluster, idma_test)
+    files:
+      # Level 0
+      - systems/snitch/test/idma_inst64_tb_pkg.sv
+      # Level 1
+      - systems/snitch/test/idma_inst64_drv_if.sv
+      - systems/snitch/test/idma_inst64_base.sv
+      # Level 2
+      - systems/snitch/test/tb_idma_inst64_copy.sv
+      - systems/snitch/test/tb_idma_inst64_transpose.sv
+
   # Synthesis wrappers
   - target: synth
     files:
@@ -170,6 +184,7 @@ sources:
       - test/midend/tb_idma_nd_midend.sv
       - test/midend/tb_idma_nd_midend_b2b.sv
       - test/midend/tb_idma_rt_midend.sv
+      - test/midend/tb_idma_transpose_midend.sv
       # Level 2
       - test/future/idma_obi2axi_bridge.sv
       - test/future/idma_tilelink2axi_bridge.sv
