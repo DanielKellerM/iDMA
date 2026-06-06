@@ -20,6 +20,8 @@
 module idma_otf_transpose #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter  int unsigned StrbWidth = 32'd8,
+  /// Tensor dimension width in elements (matches idma_pkg::TransposeDimWidth)
+  parameter  int unsigned DimWidth  = 32'd12,
   localparam int unsigned LaneW     = $clog2(StrbWidth)
 ) (
   input  logic clk_i,
@@ -29,8 +31,8 @@ module idma_otf_transpose #(
   /// Element size select: 0->1B, 1->2B, 2->4B (E = 1<<transp_mode_i)
   input  logic [1:0]  transp_mode_i,
   /// Matrix dimensions in elements
-  input  logic [11:0] tensor_size_m_i,
-  input  logic [11:0] tensor_size_n_i,
+  input  logic [DimWidth-1:0] tensor_size_m_i,
+  input  logic [DimWidth-1:0] tensor_size_n_i,
 
   /// Input beat stream (row-major), padded to full tiles
   input  logic [StrbWidth-1:0][7:0] data_i,
@@ -48,16 +50,16 @@ module idma_otf_transpose #(
   logic [1:0]       eff_mode;         // element-size mode, saturated at LaneW
   logic [LaneW:0]   ne_m1;            // NE-1
   logic [3:0]       log2_ne;          // log2(NE) = LaneW - eff_mode
-  logic [11:0]      y_tiles, n_tiles; // row-tiles, col-tiles
+  logic [DimWidth-1:0] y_tiles, n_tiles; // row-tiles, col-tiles
   logic [LaneW:0]   leftover_rows, leftover_cols;  // M%NE, N%NE (run-global)
 
   // saturate at LaneW: out-of-contract mode (E>StrbWidth) degrades to NE=1, not X
   assign eff_mode      = (transp_mode_i > LaneW) ? LaneW[1:0] : transp_mode_i;
   assign ne_m1         = (1 << (LaneW - eff_mode)) - 1;            // NE-1
   assign log2_ne       = LaneW - eff_mode;
-  // Widen the ceil-div add to 13b so it cannot wrap at the 12b dim range.
-  assign y_tiles       = 12'((13'(tensor_size_m_i) + ne_m1) >> log2_ne);
-  assign n_tiles       = 12'((13'(tensor_size_n_i) + ne_m1) >> log2_ne);
+  // Widen the ceil-div add by one bit so it cannot wrap at the dim range.
+  assign y_tiles       = DimWidth'(((DimWidth+1)'(tensor_size_m_i) + ne_m1) >> log2_ne);
+  assign n_tiles       = DimWidth'(((DimWidth+1)'(tensor_size_n_i) + ne_m1) >> log2_ne);
   assign leftover_rows = tensor_size_m_i & ne_m1;
   assign leftover_cols = tensor_size_n_i & ne_m1;
 
@@ -96,8 +98,8 @@ module idma_otf_transpose #(
   // ── Tile walkers (col-tile outer, row-tile inner; matches the feed order) ──
   // Separate WRITE walker (advanced at fill-complete) and READ walker (advanced
   // at drain-complete) because drain trails fill by up to one tile.
-  logic [11:0] rtw, ntw;   // write walker: row-tile, col-tile
-  logic [11:0] rtr, ntr;   // read  walker: row-tile, col-tile
+  logic [DimWidth-1:0] rtw, ntw;   // write walker: row-tile, col-tile
+  logic [DimWidth-1:0] rtr, ntr;   // read  walker: row-tile, col-tile
 
   logic last_y_tile_w, last_n_tile_w;  // edge flags of the tile being filled
   assign last_y_tile_w = (rtw == y_tiles - 1);

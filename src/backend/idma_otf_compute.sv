@@ -57,7 +57,8 @@ module idma_otf_compute #(
 
   if (EnableTranspose) begin : gen_transpose
     idma_otf_transpose #(
-      .StrbWidth ( StrbWidth )
+      .StrbWidth ( StrbWidth                     ),
+      .DimWidth  ( idma_pkg::TransposeDimWidth   )
     ) i_idma_otf_transpose (
       .clk_i,
       .rst_ni,

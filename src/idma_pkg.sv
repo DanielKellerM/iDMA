@@ -87,11 +87,15 @@ package idma_pkg;
         COMPUTE_TRANSPOSE = 4'd1
     } compute_op_e;
 
+    /// Transpose tensor dimension width (elements). Capacity knob, orthogonal to
+    /// the bus width; the inst64 DMCPY argb encoding is bit-bound to 12.
+    localparam int unsigned TransposeDimWidth = 32'd12;
+
     /// Transpose option type: E = 1<<mode (0/1/2 -> 1/2/4 B); tensor in elements
     typedef struct packed {
-        logic [1:0]  mode;
-        logic [11:0] tensor_m;
-        logic [11:0] tensor_n;
+        logic [1:0]                   mode;
+        logic [TransposeDimWidth-1:0] tensor_m;
+        logic [TransposeDimWidth-1:0] tensor_n;
     } transpose_options_t;
 
     /// Per-op compute parameter union (members must be equal width)
@@ -105,6 +109,12 @@ package idma_pkg;
         compute_op_e     op;
         compute_params_t params;
     } compute_options_t;
+
+    /// Compile-time compute feature enables (per op). Bundles the per-op build
+    /// gates so they never surface as loose top-module parameters.
+    typedef struct packed {
+        logic transpose;
+    } compute_enable_t;
 
     /// Supported Protocols
     /// - `AXI`: Full AXI

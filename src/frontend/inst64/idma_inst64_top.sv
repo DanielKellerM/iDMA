@@ -21,6 +21,8 @@ module idma_inst64_top #(
     parameter int unsigned DMAReqFifoDepth = 32'd3,
     parameter int unsigned NumChannels     = 32'd1,
     parameter int unsigned DMATracing      = 32'd0,
+    /// Compile-time on-the-fly compute feature enables (e.g. transpose)
+    parameter idma_pkg::compute_enable_t ComputeEnable = '0,
     parameter type         axi_ar_chan_t   = logic,
     parameter type         axi_aw_chan_t   = logic,
     parameter type         axi_req_t       = logic,
@@ -55,7 +57,7 @@ module idma_inst64_top #(
     localparam int unsigned TfIdWidth    = 32'd32;
     localparam int unsigned TFLenWidth   = AxiAddrWidth;
     localparam int unsigned RepWidth     = 32'd32;
-    localparam int unsigned NumDim       = 32'd2;
+    localparam int unsigned NumDim       = ComputeEnable.transpose ? 32'd4 : 32'd2;
     localparam int unsigned BufferDepth  = 32'd3;
 
     // derived constants and types
@@ -68,7 +70,9 @@ module idma_inst64_top #(
     localparam type id_t                 = logic[AxiIdWidth-1:0];
     localparam type tf_len_t             = logic[TFLenWidth-1:0];
     localparam type offset_t             = logic[OffsetWidth-1:0];
-    localparam type strides_t            = logic[RepWidth-1:0];
+    // strides must match the address width: transpose deltas are signed and
+    // would not sign-extend if narrower than addr_t (RepWidth sizes reps only).
+    localparam type strides_t            = addr_t;
     localparam type reps_t               = logic[RepWidth-1:0];
     localparam type tf_id_t              = logic[TfIdWidth-1:0];
 
@@ -222,7 +226,7 @@ module idma_inst64_top #(
             .idma_req_t    ( idma_req_t    ),
             .idma_rsp_t    ( idma_rsp_t    ),
             .idma_nd_req_t ( idma_nd_req_t ),
-            .RepWidths     ( RepWidth      )
+            .RepWidths     ( {NumDim{RepWidth}} )
         ) i_idma_nd_midend (
             .clk_i,
             .rst_ni,
@@ -241,6 +245,32 @@ module idma_inst64_top #(
             .busy_o            ( idma_nd_busy      [c] )
         );
 
+        // FIFO output, before transpose expansion
+        idma_nd_req_t fifo_nd_req;
+        logic         fifo_nd_valid, fifo_nd_ready;
+
+        // On-the-fly transpose: expand the compact request into the tiled ND
+        // walk; plain requests pass through. Bypassed entirely when disabled.
+        if (ComputeEnable.transpose) begin : gen_transpose
+            idma_transpose_midend #(
+                .NumDim        ( NumDim        ),
+                .StrbWidth     ( StrbWidth     ),
+                .addr_t        ( addr_t        ),
+                .idma_nd_req_t ( idma_nd_req_t )
+            ) i_idma_transpose_midend (
+                .nd_req_i ( fifo_nd_req           ),
+                .valid_i  ( fifo_nd_valid         ),
+                .ready_o  ( fifo_nd_ready         ),
+                .nd_req_o ( idma_nd_req       [c] ),
+                .valid_o  ( idma_nd_req_valid [c] ),
+                .ready_i  ( idma_nd_req_ready [c] )
+            );
+        end else begin : gen_no_transpose
+            assign idma_nd_req       [c] = fifo_nd_req;
+            assign idma_nd_req_valid [c] = fifo_nd_valid;
+            assign fifo_nd_ready         = idma_nd_req_ready [c];
+        end
+
         stream_fifo_optimal_wrap #(
             .Depth     ( DMAReqFifoDepth ),
             .type_t    ( idma_nd_req_t   ),
@@ -254,9 +284,9 @@ module idma_inst64_top #(
             .data_i     ( idma_fe_req           ),
             .valid_i    ( idma_fe_req_valid [c] ),
             .ready_o    ( idma_fe_req_ready [c] ),
-            .data_o     ( idma_nd_req       [c] ),
-            .valid_o    ( idma_nd_req_valid [c] ),
-            .ready_i    ( idma_nd_req_ready [c] )
+            .data_o     ( fifo_nd_req           ),
+            .valid_o    ( fifo_nd_valid         ),
+            .ready_i    ( fifo_nd_ready         )
         );
     end
 
@@ -362,6 +392,8 @@ module idma_inst64_top #(
         idma_fe_req_d.burst_req.opt.beo.src_reduce_len = 1'b0;
         idma_fe_req_d.burst_req.opt.beo.dst_reduce_len = 1'b0;
         idma_fe_req_d.burst_req.opt.last               = 1'b0;
+        // compute is request-scoped: default off so it never leaks across transfers
+        idma_fe_req_d.burst_req.opt.compute            = '0;
 
         // frontend config
         idma_fe_cfg      = '0;
@@ -416,6 +448,23 @@ module idma_inst64_top #(
                         idma_inst64_snitch_pkg::DMCPY : begin
                             idma_fe_cfg      = acc_req_i.data_argb[1:0];
                             idma_fe_sel_chan = acc_req_i.data_argb[4:2];
+                            // transpose request (register form only): argb spare bits carry
+                            // {enable, mode, tensor_m, tensor_n}; legalizer forces decouple.
+                            if (ComputeEnable.transpose && acc_req_i.data_argb[5]) begin
+                                idma_fe_req_d.burst_req.opt.compute.enable = 1'b1;
+                                idma_fe_req_d.burst_req.opt.compute.op     =
+                                    idma_pkg::COMPUTE_TRANSPOSE;
+                                // defense in depth: the engine needs R/AW/R/W
+                                // decoupled (the legalizer also forces this)
+                                idma_fe_req_d.burst_req.opt.beo.decouple_rw = 1'b1;
+                                idma_fe_req_d.burst_req.opt.beo.decouple_aw = 1'b1;
+                                idma_fe_req_d.burst_req.opt.compute.params.transpose.mode     =
+                                    acc_req_i.data_argb[7:6];
+                                idma_fe_req_d.burst_req.opt.compute.params.transpose.tensor_m =
+                                    acc_req_i.data_argb[19:8];
+                                idma_fe_req_d.burst_req.opt.compute.params.transpose.tensor_n =
+                                    acc_req_i.data_argb[31:20];
+                            end
                         end
                         default:;
                     endcase
@@ -519,6 +568,14 @@ module idma_inst64_top #(
         idma_fe_req = idma_fe_req_d;
         if (!idma_fe_twod) begin
             idma_fe_req.d_req[0].reps = 'd1;
+        end
+        // Higher ND dims exist only for the transpose expander (which overwrites
+        // them); keep them inert for plain requests so the nd_midend never
+        // over-iterates. No-op at NumDim=2.
+        for (int d = 1; d <= NumDim-2; d++) begin
+            idma_fe_req.d_req[d].reps        = 'd1;
+            idma_fe_req.d_req[d].src_strides = '0;
+            idma_fe_req.d_req[d].dst_strides = '0;
         end
     end
 
