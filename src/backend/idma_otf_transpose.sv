@@ -16,6 +16,11 @@
 // Contract: input padded to full tiles, fed (col-tile, row-tile, row) order;
 // out_T[nt*NE+k][rt*NE+r] = in[rt*NE+r][nt*NE+k] (element coords). strb_o masks
 // partial edge tiles. data_o/strb_o/valid_o are registered.
+//
+// Throughput: steady state is 1 + 1/NE cycles per NE-beat tile (NE drain beats +
+// one registered ping-pong handoff bubble per tile). The +1/NE is a source-rate
+// deficit of the single-credit bank handoff, not downstream jitter, so an output
+// skid cannot close it; it vanishes as NE grows (98.4% of bus peak at NE=64).
 
 module idma_otf_transpose #(
   /// Byte lanes per beat (= DataWidth/8)
