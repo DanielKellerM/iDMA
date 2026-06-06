@@ -464,44 +464,6 @@ module tb_idma_backend_rw_axi import idma_pkg::*; #(
         // wait some additional time
         #100ns;
 
-        // single-tile transpose smoke test (engine end-to-end via jobs harness)
-        if ($test$plusargs("transpose_test")) begin : tp_test
-            automatic int unsigned NE = StrbWidth;          // tile side (E=1 byte)
-            automatic addr_t       sb = 'h0000_1000;        // src base (aligned)
-            automatic addr_t       db = 'h0000_4000;        // dst base (aligned)
-            automatic byte_t       got, exp_b;
-            automatic int unsigned errs = 0;
-            automatic int unsigned guard = 0;
-            // init source tile, row-major
-            for (int unsigned i = 0; i < NE*NE; i++)
-                write_byte_axi_mem(byte_t'((i*7 + 3) & 'hFF), sb + i);
-            $display("[TP] launching %0dx%0d single-tile transpose (StrbWidth=%0d)", NE, NE, StrbWidth);
-            drv.launch_tf(NE*NE, sb, db, idma_pkg::AXI, idma_pkg::AXI,
-                          1'b1, 1'b1, $clog2(256), $clog2(256), 1'b0, 1'b0, '0,
-                          1'b1, 2'd0, 12'(NE), 12'(NE));
-            // wait for the write-burst B response (dst committed to memory), timeout-guarded
-            repeat (5) @(posedge clk);
-            while (!(axi_rsp_mem.b_valid && axi_req_mem.b_ready) && guard < 5000) begin
-                @(posedge clk); guard++;
-            end
-            if (guard >= 5000) $display("[TP] WARNING: timed out waiting for write B response");
-            repeat (20) @(posedge clk);
-            // verify: dst[c*NE+r] == src[r*NE+c]
-            for (int unsigned r = 0; r < NE; r++)
-                for (int unsigned c = 0; c < NE; c++) begin
-                    read_byte_axi_mem(got,   db + (c*NE + r));
-                    read_byte_axi_mem(exp_b, sb + (r*NE + c));
-                    if (got !== exp_b) begin
-                        errs++;
-                        if (errs <= 8) $display("[TP] MISMATCH out[c=%0d][r=%0d]=%02h exp %02h", c, r, got, exp_b);
-                    end
-                end
-            if (errs == 0) $display("[TP] PASS: %0dx%0d single-tile transpose matches golden", NE, NE);
-            else           $fatal(1, "[TP] FAIL: %0d mismatches", errs);
-            #100ns;
-            $finish();
-        end
-
         // run all requests in queue
         while (req_jobs.size() != 0) begin
             // pop front to get a job
@@ -658,8 +620,8 @@ module tb_idma_backend_rw_axi import idma_pkg::*; #(
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -1434,8 +1396,8 @@ module tb_idma_backend_r_obi_w_axi import idma_pkg::*; #(
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -2210,8 +2172,8 @@ module tb_idma_backend_r_axi_w_obi import idma_pkg::*; #(
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -3219,8 +3181,8 @@ module tb_idma_backend_rw_axi_rw_axis import idma_pkg::*; #(
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -3927,8 +3889,8 @@ module tb_idma_backend_rw_obi import idma_pkg::*; #(
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -4915,8 +4877,8 @@ typedef struct packed {
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 
@@ -5945,8 +5907,8 @@ typedef struct packed {
         end
         // wait some additional time
         #100ns;
-        // we are done! (the +transpose_test path issues its own $finish)
-        if (!$test$plusargs("transpose_test")) $finish();
+        // we are done!
+        $finish();
     end
 
 

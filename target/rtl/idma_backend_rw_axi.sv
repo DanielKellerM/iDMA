@@ -109,9 +109,15 @@ module idma_backend_rw_axi #(
     output idma_busy_t busy_o
 );
 
+    /// On-the-fly compute (transpose) holds a full StrbWidth-element tile before
+    /// emitting output, so the write side must queue a tile of descriptors while
+    /// the read side fills the engine. This tile-latency buffering lives here so
+    /// the transpose has full functionality at any NumAxInFlight.
+    localparam int unsigned ComputeFifoDepth = StrbWidth;
+
     /// The localparam MetaFifoDepth holds the maximum number of transfers that can be
     /// in-flight under any circumstances.
-    localparam int unsigned MetaFifoDepth = BufferDepth + NumAxInFlight + MemSysDepth;
+    localparam int unsigned MetaFifoDepth = BufferDepth + NumAxInFlight + MemSysDepth + ComputeFifoDepth;
 
     /// Address type
     typedef logic [AddrWidth-1:0]   addr_t;
@@ -518,7 +524,7 @@ module idma_backend_rw_axi #(
     );
 
     stream_fifo_optimal_wrap #(
-        .Depth     ( NumAxInFlight ),
+        .Depth     ( NumAxInFlight + ComputeFifoDepth ),
         .type_t    ( w_dp_req_t    ),
         .PrintInfo ( PrintFifoInfo )
     ) i_w_dp_req (
