@@ -169,7 +169,8 @@ def render_write_mgr_inst(prot_id: str, prot_ids: dict, db: dict) -> dict:
     return res
 
 
-def render_transport_layer(prot_ids: dict, db: dict, tpl_file: str) -> str:
+def render_transport_layer(prot_ids: dict, db: dict, tpl_file: str, compute_cfg: dict = None
+                           ) -> str:
     """Generate Transport Layer"""
     transport_rendered = ''
 
@@ -188,6 +189,11 @@ def render_transport_layer(prot_ids: dict, db: dict, tpl_file: str) -> str:
             'used_protocols': prot_ids[prot_id]['used'],
             'one_read_port': len(prot_ids[prot_id]['ar']) == 1,
             'one_write_port': len(prot_ids[prot_id]['aw']) == 1,
+            'enable_compute': prot_id in (compute_cfg or {}),
+            'compute_ops':
+                compute_cfg[prot_id]['ops'] if prot_id in (compute_cfg or {}) else [],
+            'compute_full_duplex':
+                compute_cfg[prot_id]['full_duplex'] if prot_id in (compute_cfg or {}) else True,
             'rendered_read_ports': render_read_mgr_inst(prot_id, prot_ids, db),
             'rendered_write_ports': render_write_mgr_inst(prot_id, prot_ids, db)
         }
