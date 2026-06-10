@@ -8,6 +8,8 @@
 /// derives the NumDim=4 tiled ND walk (row / row-tile / col-tile) from the tensor
 /// shape (M, N, element mode) and the bus StrbWidth, leaving the generic
 /// idma_nd_midend to walk it. Non-transpose requests pass through untouched.
+/// The walk reads the source up to the tile-padded bounds (ceil to NE in both
+/// dims) and writes the full padded dst extent (writes strb-masked, reads not).
 module idma_transpose_midend #(
     /// Number of ND dimensions (must be >= 4 to express the tiled walk)
     parameter int unsigned NumDim    = 32'd4,
@@ -90,6 +92,9 @@ module idma_transpose_midend #(
 `ifndef SYNTHESIS
     initial assert (NumDim >= 4) else
         $fatal(1, "idma_transpose_midend requires NumDim >= 4 (got %0d)", NumDim);
+    // mode 0..2 needs NE >= 1, i.e. log2(StrbWidth) >= 2
+    initial assert (Log2Strb >= 2) else
+        $fatal(1, "idma_transpose_midend requires StrbWidth >= 4 (got %0d)", StrbWidth);
     // reps must hold tile counts (<= 2^TensorW) and ne (<= StrbWidth); length StrbWidth.
     initial assert (RepW >= TensorW && RepW > Log2Strb) else
         $fatal(1, "idma_transpose_midend: reps field %0d b too narrow (need >= %0d)",

@@ -132,6 +132,7 @@ module idma_inst64_top #(
     logic [1:0] idma_fe_status;
     logic [2:0] idma_fe_sel_chan;
     logic       idma_fe_twod;
+    logic       idma_fe_tp_reject;
 
     // busy signals
     idma_pkg::idma_busy_t [NumChannels-1:0] idma_busy;
@@ -395,6 +396,7 @@ module idma_inst64_top #(
         // frontend config
         idma_fe_cfg      = '0;
         idma_fe_status   = '0;
+        idma_fe_tp_reject = 1'b0;
         idma_fe_sel_chan = '0;
 
         // default handshaking
@@ -451,14 +453,21 @@ module idma_inst64_top #(
                                 idma_fe_req_d.burst_req.opt.compute.enable = 1'b1;
                                 idma_fe_req_d.burst_req.opt.compute.op     =
                                     idma_pkg::COMPUTE_TRANSPOSE;
-                                idma_fe_req_d.burst_req.opt.beo.decouple_rw = 1'b1;
-                                idma_fe_req_d.burst_req.opt.beo.decouple_aw = 1'b1;
                                 idma_fe_req_d.burst_req.opt.compute.params.transpose.mode     =
                                     acc_req_i.data_argb[7:6];
                                 idma_fe_req_d.burst_req.opt.compute.params.transpose.tensor_m =
                                     acc_req_i.data_argb[19:8];
                                 idma_fe_req_d.burst_req.opt.compute.params.transpose.tensor_n =
                                     acc_req_i.data_argb[31:20];
+                            end
+                            // reject malformed transpose requests: no hardware,
+                            // reserved mode, zero dims, unaligned dst
+                            if (acc_req_i.data_argb[5]) begin
+                                idma_fe_tp_reject = !ComputeEnable.transpose
+                                    | (acc_req_i.data_argb[7:6] == 2'd3)
+                                    | (acc_req_i.data_argb[19:8] == '0)
+                                    | (acc_req_i.data_argb[31:20] == '0)
+                                    | (idma_fe_req_d.burst_req.dst_addr[OffsetWidth-1:0] != '0);
                             end
                         end
                         default:;
@@ -475,7 +484,14 @@ module idma_inst64_top #(
                     // 3. wait for twod transfer to be accepted (ready)
                     // 4. send acc response (pvalid)
                     // 5. acknowledge acc request (qready)
-                    if (acc_res_ready) begin
+                    if (idma_fe_tp_reject) begin
+                        // error response; the transfer is not launched
+                        if (acc_res_ready) begin
+                            acc_res.id      = acc_req_i.id;
+                            acc_res_valid   = 1'b1;
+                            acc_req_ready_o = 1'b1;
+                        end
+                    end else if (acc_res_ready) begin
                         idma_fe_req_valid [idma_fe_sel_chan] = 1'b1;
                         if (idma_fe_req_ready[idma_fe_sel_chan]) begin
                             acc_res.id      = acc_req_i.id;
@@ -583,6 +599,8 @@ module idma_inst64_top #(
     //--------------------------------------
     // only activate tracer if requested
 `ifndef SYNTHESIS
+    initial assert (idma_pkg::TransposeDimWidth == 32'd12) else
+        $fatal(1, "DMCPY argb transpose packing requires TransposeDimWidth == 12");
     if (DMATracing) begin : gen_tracer
         for (genvar c = 0; c < NumChannels; c++) begin : gen_channels
             // derive the name of the trace file from the hart and channel IDs

@@ -130,6 +130,30 @@ interface idma_inst64_drv_if (
         transfer_id = acc_res.data[31:0];
     endtask
 
+    // issue a transpose DMCPY and return the response error bit (negative tests)
+    task automatic dma_transpose_err(
+        input  addr_t       src,
+        input  addr_t       dst,
+        input  logic [11:0] tensor_m,
+        input  logic [11:0] tensor_n,
+        input  logic [1:0]  mode,
+        input  logic [2:0]  channel,
+        output logic        error
+    );
+        logic [63:0] argb;
+        dma_set_source(src);
+        dma_set_dest(dst);
+        argb        = '0;
+        argb[4:2]   = channel;
+        argb[5]     = 1'b1;
+        argb[7:6]   = mode;
+        argb[19:8]  = tensor_m;
+        argb[31:20] = tensor_n;
+        drive(DMCPY, '0, argb);
+        while (!acc_res_valid) @(posedge clk);
+        error = acc_res.error;
+    endtask
+
     task automatic dma_poll_status(
         input  logic [1:0]  status_idx,
         input  logic [2:0]  channel,

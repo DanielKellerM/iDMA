@@ -61,9 +61,10 @@ module tb_idma_inst64_transpose #(
     harness.drv_if.dma_wait(tid, 0);
     harness.drv_if.dma_wait_idle(0);   // ensure all writes retired before reading
     cyc = harness.drv_if.cycle_counter - c0;
-    $display("  transpose %0dx%0d (NE=%0d, %0dx%0d=%0d tiles, MP=%0d): bursts=%0d (exp NE*YT*NT=%0d) cycles=%0d eff=%0d B/cyc (bus peak %0d)",
-             mm, nn, NE, yt, nt, yt*nt, mp, burst_cnt-b0, NE*yt*nt, cyc,
-             (mm*nn*EB)/cyc, StrbWidth);
+    $display("  transpose %0dx%0d (NE=%0d, %0dx%0d=%0d tiles, MP=%0d):", mm, nn, NE, yt, nt,
+             yt*nt, mp);
+    $display("    bursts=%0d (exp NE*YT*NT=%0d) cycles=%0d eff=%0d B/cyc (bus peak %0d)",
+             burst_cnt-b0, NE*yt*nt, cyc, (mm*nn*EB)/cyc, StrbWidth);
 
     for (int unsigned c = 0; c < nn; c++)
       for (int unsigned r = 0; r < mm; r++)
@@ -116,6 +117,25 @@ module tb_idma_inst64_transpose #(
           errs++;
           if (errs <= 12) $display("[TP] leak: post-transpose copy wrong at %0d", k);
         end
+    end
+
+    // 4. malformed transpose requests: error response, nothing launched
+    begin
+      logic err;
+      longint unsigned b_rej;
+      b_rej = burst_cnt;
+      harness.drv_if.dma_transpose_err(SRC, DST, 12'd8, 12'd8, 2'd3, 3'd0, err);
+      if (!err) begin errs++; $display("[TP] reject fail: reserved mode 3"); end
+      harness.drv_if.dma_transpose_err(SRC, DST, 12'd0, 12'd8, 2'd0, 3'd0, err);
+      if (!err) begin errs++; $display("[TP] reject fail: M == 0"); end
+      harness.drv_if.dma_transpose_err(SRC, DST + 64'd1, 12'd8, 12'd8, 2'd0, 3'd0, err);
+      if (!err) begin errs++; $display("[TP] reject fail: unaligned dst"); end
+      repeat (50) @(posedge harness.clk);
+      if (burst_cnt != b_rej) begin
+        errs++; $display("[TP] reject fail: rejected request launched bursts");
+      end
+      // a valid transpose must still work after rejections
+      do_transpose(8, 8, SRC + 64'h0020_0000, DST + 64'h0020_0000);
     end
 
     if (errs == 0) $display("[TP] PASS: transpose data + padding + back-to-back + no-leak OK");
