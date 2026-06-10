@@ -5,11 +5,9 @@
 // Author: Daniel Keller <dankeller@iis.ee.ethz.ch>
 
 /// Transpose geometry expander. For a request carrying opt.compute = TRANSPOSE,
-/// derives the NumDim=4 tiled ND walk (row / row-tile / col-tile) from the
-/// logical tensor shape (M, N, element mode) and the bus StrbWidth, leaving the
-/// generic idma_nd_midend to walk it. Non-transpose requests pass through
-/// untouched. The ceil-divisions are by NE = StrbWidth>>mode (a power of two),
-/// so they reduce to shifts; only the stride products are multiplies.
+/// derives the NumDim=4 tiled ND walk (row / row-tile / col-tile) from the tensor
+/// shape (M, N, element mode) and the bus StrbWidth, leaving the generic
+/// idma_nd_midend to walk it. Non-transpose requests pass through untouched.
 module idma_transpose_midend #(
     /// Number of ND dimensions (must be >= 4 to express the tiled walk)
     parameter int unsigned NumDim    = 32'd4,
@@ -35,12 +33,10 @@ module idma_transpose_midend #(
     localparam int unsigned TensorW  =
         $bits(nd_req_o.burst_req.opt.compute.params.transpose.tensor_m);
     localparam int unsigned AddrW    = $bits(addr_t);
-    // Working width: largest term is (YT*N)<<Log2Strb -> 2*TensorW+Log2Strb bits,
-    // +1 for the signed rewind subtraction; never narrower than the cast target.
+    // working width: largest term (YT*N)<<Log2Strb, +1 for the signed rewind
     localparam int unsigned ProdW    = 2*TensorW + Log2Strb + 1;
     localparam int unsigned WorkW    = (ProdW > AddrW) ? ProdW : AddrW;
 
-    // Combinational stage: handshake passes straight through.
     assign valid_o = valid_i;
     assign ready_o = ready_i;
 
@@ -48,18 +44,15 @@ module idma_transpose_midend #(
     assign is_transpose = nd_req_i.burst_req.opt.compute.enable &
                           (nd_req_i.burst_req.opt.compute.op == idma_pkg::COMPUTE_TRANSPOSE);
 
-    // Strength-reduced geometry (matches the golden exactly). NE and E are powers
-    // of two, so NE*E == StrbWidth (constant), MP*E == YT<<Log2Strb and N*E ==
-    // N<<mode are shifts, and (NE-1)*MPE / (YT-1)*NEE fold to shift+sub. Only YT*N
-    // is a genuine (12x12) multiply — shallow enough to stay combinational, in line
-    // with the multiplier-free style of the legalizer / nd_midend / engine.
+    // NE and E are powers of two: all geometry folds to shifts except the YT*N
+    // stride product.
     always_comb begin : proc_expand
         logic [ModeW-1:0]        mode;
         logic [TensorW-1:0]      tm, tn;
         logic signed [WorkW-1:0] m, n, log2ne, ne, yt, nt, nxe, mpe;
         logic signed [WorkW-1:0] strb_c;   // NE*E == StrbWidth (mode cancels)
 
-        nd_req_o = nd_req_i;   // passthrough (addresses, opt.compute, protocol, ...)
+        nd_req_o = nd_req_i;   // passthrough
 
         if (is_transpose) begin
             mode = nd_req_i.burst_req.opt.compute.params.transpose.mode;
@@ -103,8 +96,7 @@ module idma_transpose_midend #(
                RepW, (TensorW > Log2Strb+1) ? TensorW : Log2Strb+1);
     initial assert (LenW > Log2Strb) else
         $fatal(1, "idma_transpose_midend: length field %0d b cannot hold StrbWidth", LenW);
-    // Reserved element size (mode 3 => EB=8) and zero-size tensors are out of
-    // contract: flag them rather than silently fabricating a geometry.
+    // reserved mode 3 (EB=8) and zero-size tensors are out of contract
     always_comb begin : check_domain
         if (is_transpose) begin
             assert (nd_req_i.burst_req.opt.compute.params.transpose.mode != 2'd3) else

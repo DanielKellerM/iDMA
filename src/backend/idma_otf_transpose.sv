@@ -5,22 +5,13 @@
 // Authors:
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
 //
-// On-the-fly matrix transpose engine for the iDMA transport write seam.
-// Full-duplex ping-pong (two FF tile banks); transpose datapath adapted from the
-// datamover/Ratha HWPE in plain valid/ready + byte/strb conventions.
-//
-// Element size is runtime-selectable via transp_mode_i: 0/1/2 -> 1/2/4 B,
-// E = 1<<mode, NE = StrbWidth/E elements per tile side. mode>LaneW (E>StrbWidth)
-// is out of contract; the engine saturates the effective mode at LaneW (eff_mode).
+// On-the-fly matrix transpose engine (ping-pong tile banks) for the iDMA
+// transport write seam. Adapted from the datamover (Ratha) HWPE:
+// pulp-platform/datamover@d58a985, rtl/datamover_engine.sv.
 //
 // Contract: input padded to full tiles, fed (col-tile, row-tile, row) order;
-// out_T[nt*NE+k][rt*NE+r] = in[rt*NE+r][nt*NE+k] (element coords). strb_o masks
-// partial edge tiles. data_o/strb_o/valid_o are registered.
-//
-// Throughput: steady state is 1 + 1/NE cycles per NE-beat tile (NE drain beats +
-// one registered ping-pong handoff bubble per tile). The +1/NE is a source-rate
-// deficit of the single-credit bank handoff, not downstream jitter, so an output
-// skid cannot close it; it vanishes as NE grows (98.4% of bus peak at NE=64).
+// out_T[nt*NE+k][rt*NE+r] = in[rt*NE+r][nt*NE+k]. strb_o masks partial edge tiles.
+// Throughput: 1 + 1/NE cycles per NE-beat tile (one handoff bubble per tile).
 
 module idma_otf_transpose #(
   /// Byte lanes per beat (= DataWidth/8)
@@ -51,14 +42,14 @@ module idma_otf_transpose #(
   input  logic                      ready_i
 );
 
-  // ── Geometry (NE always a power of two; only shifts / AND-masks, no div/mod) ──
+  // geometry: NE is a power of two, so only shifts and AND-masks
   logic [1:0]       eff_mode;         // element-size mode, saturated at LaneW
   logic [LaneW:0]   ne_m1;            // NE-1
   logic [3:0]       log2_ne;          // log2(NE) = LaneW - eff_mode
   logic [DimWidth-1:0] y_tiles, n_tiles; // row-tiles, col-tiles
   logic [LaneW:0]   leftover_rows, leftover_cols;  // M%NE, N%NE (run-global)
 
-  // saturate at LaneW: out-of-contract mode (E>StrbWidth) degrades to NE=1, not X
+  // saturate at LaneW: out-of-contract mode (E>StrbWidth) degrades to NE=1
   assign eff_mode      = (transp_mode_i > LaneW) ? LaneW[1:0] : transp_mode_i;
   assign ne_m1         = (1 << (LaneW - eff_mode)) - 1;            // NE-1
   assign log2_ne       = LaneW - eff_mode;
@@ -68,13 +59,10 @@ module idma_otf_transpose #(
   assign leftover_rows = tensor_size_m_i & ne_m1;
   assign leftover_cols = tensor_size_n_i & ne_m1;
 
-  // ── Storage: two FF tile banks (ping-pong). 2 * StrbWidth^2 bytes. ──
-  // Each bank physically sized for the E=1 worst case (StrbWidth x StrbWidth
-  // bytes); for E=2/4 only the low NE rows/cols are used (array reused
-  // under-filled, never replicated per element size).
+  // two ping-pong FF tile banks, sized for the E=1 worst case (StrbWidth x StrbWidth B)
   logic [StrbWidth-1:0][7:0] tile_q [2][StrbWidth];
 
-  // ── Internal output (combinational readout) + handshakes ──
+  // internal output + handshakes
   logic [StrbWidth-1:0][7:0] data_int;
   logic [StrbWidth-1:0]      strb_int;
   logic                      valid_int, ready_int;
@@ -82,13 +70,8 @@ module idma_otf_transpose #(
   assign in_hs  = valid_i   & ready_o;
   assign out_hs = valid_int & ready_int;
 
-  // ── Ping-pong / credit token ──
-  // full_q[b]=1 -> bank b holds a complete tile awaiting drain.
-  // Producer sets full_q[wr_bank] on fill-complete; consumer clears
-  // full_q[rd_bank] on drain-complete. While both banks are busy the set and
-  // clear hit DISTINCT banks (no same-bit RMW). The degenerate cases are
-  // handled by full_q being the sole arbiter: producer blocks when its target
-  // bank is full, consumer blocks when its target bank is empty.
+  // full_q[b]: bank b holds a complete tile. Producer sets on fill-complete,
+  // consumer clears on drain-complete.
   logic [1:0]       full_q;
   logic             wr_bank, rd_bank;
   logic [LaneW-1:0] wr_cnt, rd_cnt;   // intra-tile beat index (write / read)
@@ -100,9 +83,7 @@ module idma_otf_transpose #(
   assign ready_o   = ~full_q[wr_bank];
   assign valid_int =  full_q[rd_bank];
 
-  // ── Tile walkers (col-tile outer, row-tile inner; matches the feed order) ──
-  // Separate WRITE walker (advanced at fill-complete) and READ walker (advanced
-  // at drain-complete) because drain trails fill by up to one tile.
+  // tile walkers (col-tile outer, row-tile inner); drain trails fill by up to one tile
   logic [DimWidth-1:0] rtw, ntw;   // write walker: row-tile, col-tile
   logic [DimWidth-1:0] rtr, ntr;   // read  walker: row-tile, col-tile
 
@@ -114,20 +95,18 @@ module idma_otf_transpose #(
   assign last_y_tile_r = (rtr == y_tiles - 1);
   assign last_n_tile_r = (ntr == n_tiles - 1);
 
-  // ── Per-bank shadow of the drained tile's edge geometry ──
-  // Captured at fill-complete from the WRITE walker; consumed by the drain
-  // strobe so edge masking uses the tile actually being drained.
+  // per-bank edge flags, captured at fill-complete, consumed by the drain strobe
   logic shadow_last_y [2];
   logic shadow_last_n [2];
 
-  // Fill-/drain-complete events
+  // fill-/drain-complete events
   logic fill_done, drain_done, exec_done;
   assign fill_done  = in_hs  & wr_last;
   assign drain_done = out_hs & rd_last;
-  // The whole transfer is complete once the FINAL tile has fully DRAINED.
+  // transfer done once the final tile drains
   assign exec_done  = drain_done & last_y_tile_r & last_n_tile_r;
 
-  // ── Producer (read/input) side ──
+  // producer (input) side
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
       for (int r = 0; r < StrbWidth; r++) begin
@@ -157,11 +136,9 @@ module idma_otf_transpose #(
         wr_cnt <= wr_last ? '0 : (wr_cnt + 1'b1);
       end
       if (fill_done) begin
-        // Snapshot the filled tile's edge flags into its bank's shadow.
         shadow_last_y[wr_bank] <= last_y_tile_w;
         shadow_last_n[wr_bank] <= last_n_tile_w;
         wr_bank <= ~wr_bank;
-        // Advance the WRITE tile walk (row-tile inner, col-tile outer).
         if (rtw == y_tiles - 1) begin
           rtw <= '0;
           ntw <= ntw + 1'b1;
@@ -172,7 +149,7 @@ module idma_otf_transpose #(
     end
   end
 
-  // ── Consumer (write/output) side ──
+  // consumer (output) side
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni || clear_i || exec_done) begin
       rd_cnt  <= '0;
@@ -185,7 +162,6 @@ module idma_otf_transpose #(
       end
       if (drain_done) begin
         rd_bank <= ~rd_bank;
-        // Advance the READ tile walk (same order as the write walk).
         if (rtr == y_tiles - 1) begin
           rtr <= '0;
           ntr <= ntr + 1'b1;
@@ -196,12 +172,7 @@ module idma_otf_transpose #(
     end
   end
 
-  // ── Full/empty token ──
-  // Set on fill-complete (target wr_bank), clear on drain-complete (rd_bank).
-  // While both banks active these are distinct banks; the single-tile-in-flight
-  // case (wr_bank == rd_bank) is mutually exclusive in time (fill of a bank
-  // cannot complete while that same bank is full, drain cannot complete while
-  // empty), so set and clear never collide on the same bit in the same cycle.
+  // full/empty token
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni || clear_i || exec_done) begin
       full_q <= 2'b00;
@@ -211,9 +182,8 @@ module idma_otf_transpose #(
     end
   end
 
-  // ── Transposed, element-aware readout (verbatim baseline math, bank-indexed) ──
-  // data byte p (= element e=p>>logE, byte b=p&(E-1)) reads input element
-  // (e, rd_cnt) from the draining bank: tile_q[rd_bank][e][rd_cnt*E + b].
+  // transposed readout: byte p (element e=p>>logE, byte b=p&(E-1)) reads
+  // tile_q[rd_bank][e][rd_cnt*E + b]
   always_comb begin
     for (int p = 0; p < StrbWidth; p++) begin
       automatic int unsigned e   = p >> eff_mode;
@@ -223,9 +193,7 @@ module idma_otf_transpose #(
     end
   end
 
-  // ── Output byte-valid (strobe), element-granular edge masking ──
-  // Driven by the DRAIN side: rd_cnt + per-bank shadow flags. leftover_rows/
-  // leftover_cols are run-global constants (not shadowed).
+  // output strobe: element-granular edge masking from the drain-side shadow flags
   always_comb begin
     logic [StrbWidth-1:0] em;  // per-element valid (only low NE bits meaningful)
     logic ly, ln;
@@ -247,9 +215,7 @@ module idma_otf_transpose #(
       strb_int[p] = em[p >> eff_mode];
   end
 
-  // ── Registered output stage (cuts the readout mux; full throughput) ──
-  // ready_int = ~valid_o | ready_i. Reset only by rst/clear (NOT exec_done) so
-  // the final drained beat is held until the consumer accepts it.
+  // output register; not cleared by exec_done so the final beat is held until accepted
   assign ready_int = ~valid_o | ready_i;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni || clear_i) begin

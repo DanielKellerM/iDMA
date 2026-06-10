@@ -449,7 +449,7 @@ ${rendered_read_ports[read_port]}
     );
 
     //--------------------------------------
-    // On-the-fly compute dispatcher (write seam) — bypassed unless EnableCompute
+    // On-the-fly compute (write seam)
     //--------------------------------------
 
     if (EnableCompute) begin : gen_compute
@@ -458,7 +458,7 @@ ${rendered_read_ports[read_port]}
         byte_t [StrbWidth-1:0] cmp_data_o;
         strb_t                 cmp_strb_o;
 
-        // beat retires on w_beat_done (strobe-independent: zero-strobe edge beats drain)
+        // beats retire on w_beat_done (strobe-independent)
         idma_otf_compute #(
             .StrbWidth ( StrbWidth )
         ) i_idma_otf_compute (
@@ -476,11 +476,11 @@ ${rendered_read_ports[read_port]}
             .ready_i     ( w_beat_done         )
         );
 
-        // presence = whole beat; edge masking rides wr_strb (separate from valid)
+        // whole-beat valid; edge masking carried on wr_strb
         assign wr_data           = cmp_active ? cmp_data_o : buffer_out;
         assign wr_valid          = cmp_active ? {StrbWidth{cmp_out_valid}} : buffer_out_valid;
         assign wr_strb           = cmp_active ? cmp_strb_o : '1;
-        // pop the whole beat only on a real compute input handshake (avoids empty-pop)
+        // pop the buffer only on a compute input handshake
         assign dataflow_ready_in = cmp_active ? {StrbWidth{(&buffer_out_valid) & cmp_in_ready}}
                                               : buffer_out_ready_shifted;
     end else begin : gen_no_compute

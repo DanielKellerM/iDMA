@@ -70,8 +70,7 @@ module idma_inst64_top #(
     localparam type id_t                 = logic[AxiIdWidth-1:0];
     localparam type tf_len_t             = logic[TFLenWidth-1:0];
     localparam type offset_t             = logic[OffsetWidth-1:0];
-    // strides must match the address width: transpose deltas are signed and
-    // would not sign-extend if narrower than addr_t (RepWidth sizes reps only).
+    // strides must match addr_t: signed transpose deltas would not sign-extend if narrower
     localparam type strides_t            = addr_t;
     localparam type reps_t               = logic[RepWidth-1:0];
     localparam type tf_id_t              = logic[TfIdWidth-1:0];
@@ -249,8 +248,7 @@ module idma_inst64_top #(
         idma_nd_req_t fifo_nd_req;
         logic         fifo_nd_valid, fifo_nd_ready;
 
-        // On-the-fly transpose: expand the compact request into the tiled ND
-        // walk; plain requests pass through. Bypassed entirely when disabled.
+        // expand transpose requests into the tiled ND walk
         if (ComputeEnable.transpose) begin : gen_transpose
             idma_transpose_midend #(
                 .NumDim        ( NumDim        ),
@@ -392,7 +390,6 @@ module idma_inst64_top #(
         idma_fe_req_d.burst_req.opt.beo.src_reduce_len = 1'b0;
         idma_fe_req_d.burst_req.opt.beo.dst_reduce_len = 1'b0;
         idma_fe_req_d.burst_req.opt.last               = 1'b0;
-        // compute is request-scoped: default off so it never leaks across transfers
         idma_fe_req_d.burst_req.opt.compute            = '0;
 
         // frontend config
@@ -448,14 +445,12 @@ module idma_inst64_top #(
                         idma_inst64_snitch_pkg::DMCPY : begin
                             idma_fe_cfg      = acc_req_i.data_argb[1:0];
                             idma_fe_sel_chan = acc_req_i.data_argb[4:2];
-                            // transpose request (register form only): argb spare bits carry
-                            // {enable, mode, tensor_m, tensor_n}; legalizer forces decouple.
+                            // transpose request (register form only): argb spare bits
+                            // carry {enable, mode, tensor_m, tensor_n}
                             if (ComputeEnable.transpose && acc_req_i.data_argb[5]) begin
                                 idma_fe_req_d.burst_req.opt.compute.enable = 1'b1;
                                 idma_fe_req_d.burst_req.opt.compute.op     =
                                     idma_pkg::COMPUTE_TRANSPOSE;
-                                // defense in depth: the engine needs R/AW/R/W
-                                // decoupled (the legalizer also forces this)
                                 idma_fe_req_d.burst_req.opt.beo.decouple_rw = 1'b1;
                                 idma_fe_req_d.burst_req.opt.beo.decouple_aw = 1'b1;
                                 idma_fe_req_d.burst_req.opt.compute.params.transpose.mode     =
@@ -569,9 +564,7 @@ module idma_inst64_top #(
         if (!idma_fe_twod) begin
             idma_fe_req.d_req[0].reps = 'd1;
         end
-        // Higher ND dims exist only for the transpose expander (which overwrites
-        // them); keep them inert for plain requests so the nd_midend never
-        // over-iterates. No-op at NumDim=2.
+        // keep higher dims inert for plain requests (the transpose expander overwrites them)
         for (int d = 1; d <= NumDim-2; d++) begin
             idma_fe_req.d_req[d].reps        = 'd1;
             idma_fe_req.d_req[d].src_strides = '0;

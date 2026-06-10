@@ -170,10 +170,7 @@ _rsp_t ${protocol}_write_rsp_i,
     output idma_busy_t busy_o
 );
 
-    /// On-the-fly compute (transpose) holds a full StrbWidth-element tile before
-    /// emitting output, so the write side must queue a tile of descriptors while
-    /// the read side fills the engine. This tile-latency buffering lives here so
-    /// the transpose has full functionality at any NumAxInFlight.
+    /// Extra write-descriptor slots covering the compute (transpose) tile-fill latency
     localparam int unsigned ComputeFifoDepth = ${"StrbWidth" if enable_compute else "32'd0"};
 
     /// The localparam MetaFifoDepth holds the maximum number of transfers that can be

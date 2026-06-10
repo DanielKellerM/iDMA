@@ -145,7 +145,7 @@ module idma_axi_write #(
         if (w_dp_req_i.tailer != '0 & last_w) begin
             mask_out = mask_out & w_last_mask;
         end
-        // narrow by the external (engine) mask — edge-tile / OTF write masking
+        // external mask: some bytes may be masked by an OTF engine
         mask_out = mask_out & mask_ext_i;
     end
 
@@ -176,7 +176,6 @@ module idma_axi_write #(
     // write happening: both the bus (w_ready) and the buffer (ready_to_write) is high
     assign write_happening = ready_to_write & write_rsp_i.w_ready;
 
-    // strobe-independent beat-accepted pulse (lets an OTF engine advance on zero-strobe beats)
     assign w_beat_done_o = write_happening;
 
     // the main buffer is conditionally to the write mask popped

@@ -6,8 +6,7 @@
 // - Daniel Keller <dankeller@iis.ee.ethz.ch>
 
 /// On-the-fly compute dispatcher at the transport write seam: latches the
-/// per-transfer compute options and dispatches one op per transfer to its
-/// sub-unit. Per-op compile-in set lives on this module only.
+/// per-transfer compute options and dispatches one op per transfer to its sub-unit.
 module idma_otf_compute #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter int unsigned StrbWidth       = 32'd8,
@@ -20,7 +19,7 @@ module idma_otf_compute #(
   /// Per-transfer compute config; valid only while `cfg_valid_i`
   input  idma_pkg::compute_options_t compute_i,
   input  logic                       cfg_valid_i,
-  /// A supported compute op is armed for this transfer (transport muxes the seam)
+  /// A supported compute op is armed for this transfer
   output logic                       active_o,
 
   /// Input beat stream (from the dataflow buffer)
@@ -35,7 +34,7 @@ module idma_otf_compute #(
   input  logic                      ready_i
 );
 
-  // per-transfer config latch with first-beat bypass (compute_i valid only on cfg_valid_i)
+  // config latch with first-beat bypass
   idma_pkg::compute_options_t latched_q, eff_compute;
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni)          latched_q <= '0;
@@ -43,14 +42,14 @@ module idma_otf_compute #(
   end
   assign eff_compute = cfg_valid_i ? compute_i : latched_q;
 
-  // ── Per-op select (a sub-unit is selectable only if compiled in) ──
+  // per-op select
   logic sel_transpose;
   assign sel_transpose = eff_compute.enable &
                          (eff_compute.op == idma_pkg::COMPUTE_TRANSPOSE) & EnableTranspose;
 
-  assign active_o = sel_transpose /* | sel_<future op> ... */;
+  assign active_o = sel_transpose;
 
-  // ── Transpose sub-unit ──
+  // transpose sub-unit
   logic [StrbWidth-1:0][7:0] tp_data;
   logic [StrbWidth-1:0]      tp_strb;
   logic                      tp_valid, tp_in_ready;
@@ -78,7 +77,7 @@ module idma_otf_compute #(
     assign tp_data = '0; assign tp_strb = '0; assign tp_valid = 1'b0; assign tp_in_ready = 1'b0;
   end
 
-  // ── Output dispatch (one op per transfer) ──
+  // output dispatch
   always_comb begin
     data_o     = '0;
     strb_o     = '0;
@@ -91,7 +90,7 @@ module idma_otf_compute #(
         valid_o    = tp_valid;
         in_ready_o = tp_in_ready;
       end
-      default: /* no compute armed: transport bypasses this block */ ;
+      default: ;
     endcase
   end
 

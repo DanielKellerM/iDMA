@@ -66,8 +66,7 @@ module idma_nd_midend #(
     localparam int unsigned StrideSelWidth = $clog2(NumDim-1) + 'd1;
 
 `ifndef SYNTHESIS
-    // Strides are added to the address with same-width arithmetic, so a stride
-    // narrower than the address would not sign-extend (negative deltas break).
+    // strides are added with same-width arithmetic; narrower strides would not sign-extend
     initial assert ($bits(nd_req_i.d_req[0].src_strides) == $bits(nd_req_i.burst_req.src_addr))
         else $fatal(1, "idma_nd_midend: stride width (%0d) != address width (%0d)",
                     $bits(nd_req_i.d_req[0].src_strides), $bits(nd_req_i.burst_req.src_addr));
