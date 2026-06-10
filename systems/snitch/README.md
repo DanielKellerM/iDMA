@@ -55,3 +55,11 @@ bus and verifies the AXI sim memory. Requires `questa-2023.4`.
   `NumAxInFlight` (down to the backend min) — the compute backend internally
   buffers a tile of write descriptors (`ComputeFifoDepth = StrbWidth`), so there
   is no `NumAxInFlight >= NE` constraint.
+
+## Transpose memory contract
+
+A transposed transfer reads the source up to the tile-padded bounds
+(`ceil(M/NE)*NE` rows of `N` elements, the last row tile reading past row `M-1`)
+and writes the full padded destination extent (`ceil(N/NE)*NE` rows at pitch
+`MP = ceil(M/NE)*NE`; padding is strobe-masked but addressed). Both regions must
+be mapped, side-effect-free memory.

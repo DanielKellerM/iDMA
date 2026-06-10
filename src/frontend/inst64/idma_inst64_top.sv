@@ -601,6 +601,13 @@ module idma_inst64_top #(
 `ifndef SYNTHESIS
     initial assert (idma_pkg::TransposeDimWidth == 32'd12) else
         $fatal(1, "DMCPY argb transpose packing requires TransposeDimWidth == 12");
+`ifndef VERILATOR
+    // capability cross-check against the generated backend's baked compute set
+    if (ComputeEnable.transpose) begin : gen_compute_check
+        initial assert (gen_backend[0].i_idma_backend_rw_axi.ComputeEnable.transpose) else
+            $fatal(1, "ComputeEnable.transpose requires a compute-enabled backend variant");
+    end
+`endif
     if (DMATracing) begin : gen_tracer
         for (genvar c = 0; c < NumChannels; c++) begin : gen_channels
             // derive the name of the trace file from the hart and channel IDs

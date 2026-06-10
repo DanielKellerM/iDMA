@@ -112,6 +112,15 @@ module idma_backend_rw_axi #(
     /// Extra write-descriptor slots covering the compute (transpose) tile-fill latency
     localparam int unsigned ComputeFifoDepth = StrbWidth;
 
+    /// Per-op compute set baked into this variant (frontends may cross-check)
+    localparam idma_pkg::compute_enable_t ComputeEnable =
+        '{transpose: 1'b1};
+`ifndef SYNTHESIS
+    // no engine flush on abort: compute is incompatible with error handling
+    initial assert (ErrorCap == idma_pkg::NO_ERROR_HANDLING) else
+        $fatal(1, "compute requires ErrorCap == NO_ERROR_HANDLING");
+`endif
+
     /// The localparam MetaFifoDepth holds the maximum number of transfers that can be
     /// in-flight under any circumstances.
     localparam int unsigned MetaFifoDepth = BufferDepth + NumAxInFlight + MemSysDepth + ComputeFifoDepth;

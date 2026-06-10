@@ -10,6 +10,7 @@
 /// idma_nd_midend to walk it. Non-transpose requests pass through untouched.
 /// The walk reads the source up to the tile-padded bounds (ceil to NE in both
 /// dims) and writes the full padded dst extent (writes strb-masked, reads not).
+/// Combinational; outputs are quasi-static per request (multicycle-safe in STA).
 module idma_transpose_midend #(
     /// Number of ND dimensions (must be >= 4 to express the tiled walk)
     parameter int unsigned NumDim    = 32'd4,
@@ -86,6 +87,12 @@ module idma_transpose_midend #(
             nd_req_o.d_req[2].reps        = nt[RepW-1:0];
             nd_req_o.d_req[2].src_strides = addr_t'(strb_c - ((yt * n) <<< Log2Strb) + nxe);
             nd_req_o.d_req[2].dst_strides = addr_t'(strb_c);
+            // the walk is exactly 4-D: neutralize any higher dims
+            for (int unsigned d = 3; d < NumDim-1; d++) begin
+                nd_req_o.d_req[d].reps        = RepW'(1);
+                nd_req_o.d_req[d].src_strides = '0;
+                nd_req_o.d_req[d].dst_strides = '0;
+            end
         end
     end
 

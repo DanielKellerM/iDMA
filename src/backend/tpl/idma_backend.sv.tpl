@@ -172,6 +172,17 @@ _rsp_t ${protocol}_write_rsp_i,
 
     /// Extra write-descriptor slots covering the compute (transpose) tile-fill latency
     localparam int unsigned ComputeFifoDepth = ${"StrbWidth" if enable_compute else "32'd0"};
+% if enable_compute:
+
+    /// Per-op compute set baked into this variant (frontends may cross-check)
+    localparam idma_pkg::compute_enable_t ComputeEnable =
+        '{${', '.join("%s: 1'b1" % op for op in compute_ops)}};
+`ifndef SYNTHESIS
+    // no engine flush on abort: compute is incompatible with error handling
+    initial assert (ErrorCap == idma_pkg::NO_ERROR_HANDLING) else
+        $fatal(1, "compute requires ErrorCap == NO_ERROR_HANDLING");
+`endif
+% endif
 
     /// The localparam MetaFifoDepth holds the maximum number of transfers that can be
     /// in-flight under any circumstances.
