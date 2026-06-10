@@ -338,6 +338,9 @@ idma_sim_tb_idma_otf_transpose:
 	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=8  -gM=7   -gN=5  -gEB=2 tb_idma_otf_transpose +BP -do "run -all; quit"
 	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=8  -gM=5   -gN=3  -gEB=4 tb_idma_otf_transpose +BP -do "run -all; quit"
 	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gStrbWidth=64 -gM=130 -gN=70 -gEB=1 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gFullDuplex=0 -gStrbWidth=8  -gM=13 -gN=19 -gEB=1 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gFullDuplex=0 -gStrbWidth=8  -gM=7  -gN=5  -gEB=2 tb_idma_otf_transpose +BP -do "run -all; quit"
+	cd $(IDMA_OTF_TP_DIR); $(VSIM) -c -t 1ps -gFullDuplex=0 -gStrbWidth=64 -gM=130 -gN=70 -gEB=1 tb_idma_otf_transpose +BP -do "run -all; quit"
 
 # Multi-tile transpose via the ND midend (transposed strides) -> rw_axi backend
 # (engine spliced at the write seam) -> axi_sim_mem. Covers aligned and edge
