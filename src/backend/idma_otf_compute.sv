@@ -11,7 +11,9 @@ module idma_otf_compute #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter int unsigned StrbWidth       = 32'd8,
   /// Compile-time per-op feature enables (value rendered by the generator)
-  parameter idma_pkg::compute_enable_t ComputeEnable = '0
+  parameter idma_pkg::compute_enable_t ComputeEnable = '0,
+  /// Transpose engine duplex (1: two banks full rate, 0: one bank half area)
+  parameter bit                        TransposeFullDuplex = 1'b1
 ) (
   input  logic clk_i,
   input  logic rst_ni,
@@ -56,8 +58,9 @@ module idma_otf_compute #(
 
   if (ComputeEnable.transpose) begin : gen_transpose
     idma_otf_transpose #(
-      .StrbWidth ( StrbWidth                     ),
-      .DimWidth  ( idma_pkg::TransposeDimWidth   )
+      .StrbWidth  ( StrbWidth                   ),
+      .DimWidth   ( idma_pkg::TransposeDimWidth ),
+      .FullDuplex ( TransposeFullDuplex         )
     ) i_idma_otf_transpose (
       .clk_i,
       .rst_ni,

@@ -458,8 +458,9 @@ ${rendered_read_ports[read_port]}
 
     // beats retire on w_beat_done (strobe-independent)
     idma_otf_compute #(
-        .StrbWidth     ( StrbWidth ),
-        .ComputeEnable ( '{${', '.join("%s: 1'b1" % op for op in compute_ops)}} )
+        .StrbWidth           ( StrbWidth ),
+        .ComputeEnable       ( '{${', '.join("%s: 1'b1" % op for op in compute_ops)}} ),
+        .TransposeFullDuplex ( 1'b${'1' if compute_full_duplex else '0'} )
     ) i_idma_otf_compute (
         .clk_i,
         .rst_ni,

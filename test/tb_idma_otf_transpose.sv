@@ -17,7 +17,8 @@
 `timescale 1ns/1ps
 
 module tb_idma_otf_transpose #(
-  parameter int unsigned StrbWidth = 32'd8,
+  parameter int unsigned StrbWidth  = 32'd8,
+  parameter bit          FullDuplex = 1'b1,
   parameter int unsigned M         = 32'd8,   // matrix rows (elements)
   parameter int unsigned N         = 32'd8,   // matrix cols (elements)
   parameter int unsigned EB        = 32'd1    // element size in bytes (1/2/4)
@@ -45,7 +46,8 @@ module tb_idma_otf_transpose #(
   logic                      dout_valid, dout_ready;
 
   idma_otf_transpose #(
-    .StrbWidth (StrbWidth)
+    .StrbWidth  (StrbWidth),
+    .FullDuplex (FullDuplex)
   ) i_dut (
     .clk_i           (clk),
     .rst_ni          (rst_n),

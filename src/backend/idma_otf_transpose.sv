@@ -15,10 +15,13 @@
 
 module idma_otf_transpose #(
   /// Byte lanes per beat (= DataWidth/8)
-  parameter  int unsigned StrbWidth = 32'd8,
+  parameter  int unsigned StrbWidth  = 32'd8,
   /// Tensor dimension width in elements (matches idma_pkg::TransposeDimWidth)
-  parameter  int unsigned DimWidth  = 32'd12,
-  localparam int unsigned LaneW     = $clog2(StrbWidth)
+  parameter  int unsigned DimWidth   = 32'd12,
+  /// 1: two tile banks, fill while draining; 0: one bank (half area, half rate)
+  parameter  bit          FullDuplex = 1'b1,
+  localparam int unsigned NumBanks   = FullDuplex ? 32'd2 : 32'd1,
+  localparam int unsigned LaneW      = $clog2(StrbWidth)
 ) (
   input  logic clk_i,
   input  logic rst_ni,
@@ -59,8 +62,8 @@ module idma_otf_transpose #(
   assign leftover_rows = tensor_size_m_i & ne_m1;
   assign leftover_cols = tensor_size_n_i & ne_m1;
 
-  // two ping-pong FF tile banks, sized for the E=1 worst case (StrbWidth x StrbWidth B)
-  logic [StrbWidth-1:0][7:0] tile_q [2][StrbWidth];
+  // FF tile banks (ping-pong when FullDuplex), E=1 worst case (StrbWidth x StrbWidth B)
+  logic [StrbWidth-1:0][7:0] tile_q [NumBanks][StrbWidth];
 
   // internal output + handshakes
   logic [StrbWidth-1:0][7:0] data_int;
@@ -72,7 +75,7 @@ module idma_otf_transpose #(
 
   // full_q[b]: bank b holds a complete tile. Producer sets on fill-complete,
   // consumer clears on drain-complete.
-  logic [1:0]       full_q;
+  logic [NumBanks-1:0] full_q;
   logic             wr_bank, rd_bank;
   logic [LaneW-1:0] wr_cnt, rd_cnt;   // intra-tile beat index (write / read)
   logic             wr_last, rd_last;
@@ -96,8 +99,8 @@ module idma_otf_transpose #(
   assign last_n_tile_r = (ntr == n_tiles - 1);
 
   // per-bank edge flags, captured at fill-complete, consumed by the drain strobe
-  logic shadow_last_y [2];
-  logic shadow_last_n [2];
+  logic shadow_last_y [NumBanks];
+  logic shadow_last_n [NumBanks];
 
   // fill-/drain-complete events
   logic fill_done, drain_done, exec_done;
@@ -109,27 +112,26 @@ module idma_otf_transpose #(
   // producer (input) side
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      for (int r = 0; r < StrbWidth; r++) begin
-        tile_q[0][r] <= '0;
-        tile_q[1][r] <= '0;
-      end
+      for (int b = 0; b < NumBanks; b++)
+        for (int r = 0; r < StrbWidth; r++)
+          tile_q[b][r] <= '0;
       wr_cnt           <= '0;
       wr_bank          <= 1'b0;
       rtw              <= '0;
       ntw              <= '0;
-      shadow_last_y[0] <= 1'b0;
-      shadow_last_y[1] <= 1'b0;
-      shadow_last_n[0] <= 1'b0;
-      shadow_last_n[1] <= 1'b0;
+      for (int b = 0; b < NumBanks; b++) begin
+        shadow_last_y[b] <= 1'b0;
+        shadow_last_n[b] <= 1'b0;
+      end
     end else if (clear_i || exec_done) begin
       wr_cnt           <= '0;
       wr_bank          <= 1'b0;
       rtw              <= '0;
       ntw              <= '0;
-      shadow_last_y[0] <= 1'b0;
-      shadow_last_y[1] <= 1'b0;
-      shadow_last_n[0] <= 1'b0;
-      shadow_last_n[1] <= 1'b0;
+      for (int b = 0; b < NumBanks; b++) begin
+        shadow_last_y[b] <= 1'b0;
+        shadow_last_n[b] <= 1'b0;
+      end
     end else begin
       if (in_hs) begin
         tile_q[wr_bank][wr_cnt] <= data_i;
@@ -138,7 +140,7 @@ module idma_otf_transpose #(
       if (fill_done) begin
         shadow_last_y[wr_bank] <= last_y_tile_w;
         shadow_last_n[wr_bank] <= last_n_tile_w;
-        wr_bank <= ~wr_bank;
+        wr_bank <= FullDuplex ? ~wr_bank : 1'b0;
         if (rtw == y_tiles - 1) begin
           rtw <= '0;
           ntw <= ntw + 1'b1;
@@ -161,7 +163,7 @@ module idma_otf_transpose #(
         rd_cnt <= rd_last ? '0 : (rd_cnt + 1'b1);
       end
       if (drain_done) begin
-        rd_bank <= ~rd_bank;
+        rd_bank <= FullDuplex ? ~rd_bank : 1'b0;
         if (rtr == y_tiles - 1) begin
           rtr <= '0;
           ntr <= ntr + 1'b1;

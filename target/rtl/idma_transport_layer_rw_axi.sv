@@ -218,8 +218,9 @@ module idma_transport_layer_rw_axi #(
 
     // beats retire on w_beat_done (strobe-independent)
     idma_otf_compute #(
-        .StrbWidth     ( StrbWidth ),
-        .ComputeEnable ( '{transpose: 1'b1} )
+        .StrbWidth           ( StrbWidth ),
+        .ComputeEnable       ( '{transpose: 1'b1} ),
+        .TransposeFullDuplex ( 1'b1 )
     ) i_idma_otf_compute (
         .clk_i,
         .rst_ni,
