@@ -34,7 +34,8 @@ def render_backend(prot_ids: dict, db: dict, tpl_file: str, compute_ids: list = 
         # on-the-fly compute is hosted at the (single) AXI write seam
         enable_compute = prot_id in compute_ids
         if enable_compute and not (swp and used_write_prots[0] == 'axi'):
-            raise ValueError(f'compute (IDMA_VIDMA_IDS) requires a single AXI write port: {prot_id}')
+            raise ValueError(
+                f'compute (IDMA_VIDMA_IDS) requires a single AXI write port: {prot_id}')
 
         # create context
         context = {

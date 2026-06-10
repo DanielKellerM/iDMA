@@ -58,9 +58,9 @@ def main():
 
     # decide what to render
     if args.entity == 'transport':
-        print(render_transport_layer(protocol_ids, protocol_db, args.tpl))
+        print(render_transport_layer(protocol_ids, protocol_db, args.tpl, args.compute_ids))
     elif args.entity == 'legalizer':
-        print(render_legalizer(protocol_ids, protocol_db, args.tpl))
+        print(render_legalizer(protocol_ids, protocol_db, args.tpl, args.compute_ids))
     elif args.entity == 'backend':
         print(render_backend(protocol_ids, protocol_db, args.tpl, args.compute_ids))
     elif args.entity == 'vsim_wave':

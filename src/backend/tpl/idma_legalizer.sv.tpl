@@ -478,8 +478,13 @@ w_num_bytes_to_pb = w_page_num_bytes_to_pb;
                 dst_protocol:   req_i.opt.dst_protocol,
                 read_shift:     '0,
                 write_shift:    '0,
+% if enable_compute:
                 decouple_rw:    req_i.opt.beo.decouple_rw | req_i.opt.compute.enable,
                 decouple_aw:    req_i.opt.beo.decouple_aw | req_i.opt.compute.enable,
+% else:
+                decouple_rw:    req_i.opt.beo.decouple_rw,
+                decouple_aw:    req_i.opt.beo.decouple_aw,
+% endif
                 src_max_llen:   req_i.opt.beo.src_max_llen,
                 dst_max_llen:   req_i.opt.beo.dst_max_llen,
                 src_reduce_len: req_i.opt.beo.src_reduce_len,

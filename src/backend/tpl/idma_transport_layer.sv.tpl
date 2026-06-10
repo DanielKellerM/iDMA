@@ -23,8 +23,6 @@ module idma_transport_layer_${name_uniqueifier} #(
     parameter bit MaskInvalidData = 1'b1,
     /// Print the info of the FIFO configuration
     parameter bit PrintFifoInfo = 1'b0,
-    /// Instantiate the on-the-fly compute dispatcher at the write seam
-    parameter bit EnableCompute = 1'b0,
     /// `r_dp_req_t` type:
     parameter type r_dp_req_t = logic,
     /// `w_dp_req_t` type:
@@ -230,7 +228,7 @@ _rsp_t ${protocol}_write_rsp_i,
     // aligned and coalesced data leaving the buffer
     byte_t [2*StrbWidth-1:0] buffer_out_tmp;
     byte_t [StrbWidth-1:0] buffer_out, buffer_out_shifted;
-    // compute write seam (passthrough unless EnableCompute)
+    // compute write seam (passthrough when compute is off)
     byte_t [StrbWidth-1:0] wr_data;
     strb_t                 wr_valid, wr_strb, mask_ext_shifted, dataflow_ready_in;
     logic                  w_beat_done;
@@ -452,43 +450,44 @@ ${rendered_read_ports[read_port]}
     // On-the-fly compute (write seam)
     //--------------------------------------
 
-    if (EnableCompute) begin : gen_compute
-        logic                  cmp_active;
-        logic                  cmp_in_ready, cmp_out_valid;
-        byte_t [StrbWidth-1:0] cmp_data_o;
-        strb_t                 cmp_strb_o;
+% if enable_compute:
+    logic                  cmp_active;
+    logic                  cmp_in_ready, cmp_out_valid;
+    byte_t [StrbWidth-1:0] cmp_data_o;
+    strb_t                 cmp_strb_o;
 
-        // beats retire on w_beat_done (strobe-independent)
-        idma_otf_compute #(
-            .StrbWidth ( StrbWidth )
-        ) i_idma_otf_compute (
-            .clk_i,
-            .rst_ni,
-            .compute_i   ( w_dp_req_i.compute ),
-            .cfg_valid_i ( w_dp_valid_i        ),
-            .active_o    ( cmp_active          ),
-            .data_i      ( buffer_out          ),
-            .valid_i     ( &buffer_out_valid   ),
-            .in_ready_o  ( cmp_in_ready        ),
-            .data_o      ( cmp_data_o          ),
-            .strb_o      ( cmp_strb_o          ),
-            .valid_o     ( cmp_out_valid       ),
-            .ready_i     ( w_beat_done         )
-        );
+    // beats retire on w_beat_done (strobe-independent)
+    idma_otf_compute #(
+        .StrbWidth     ( StrbWidth ),
+        .ComputeEnable ( '{${', '.join("%s: 1'b1" % op for op in compute_ops)}} )
+    ) i_idma_otf_compute (
+        .clk_i,
+        .rst_ni,
+        .compute_i   ( w_dp_req_i.compute ),
+        .cfg_valid_i ( w_dp_valid_i        ),
+        .active_o    ( cmp_active          ),
+        .data_i      ( buffer_out          ),
+        .valid_i     ( &buffer_out_valid   ),
+        .in_ready_o  ( cmp_in_ready        ),
+        .data_o      ( cmp_data_o          ),
+        .strb_o      ( cmp_strb_o          ),
+        .valid_o     ( cmp_out_valid       ),
+        .ready_i     ( w_beat_done         )
+    );
 
-        // whole-beat valid; edge masking carried on wr_strb
-        assign wr_data           = cmp_active ? cmp_data_o : buffer_out;
-        assign wr_valid          = cmp_active ? {StrbWidth{cmp_out_valid}} : buffer_out_valid;
-        assign wr_strb           = cmp_active ? cmp_strb_o : '1;
-        // pop the buffer only on a compute input handshake
-        assign dataflow_ready_in = cmp_active ? {StrbWidth{(&buffer_out_valid) & cmp_in_ready}}
-                                              : buffer_out_ready_shifted;
-    end else begin : gen_no_compute
-        assign wr_data           = buffer_out;
-        assign wr_valid          = buffer_out_valid;
-        assign wr_strb           = '1;
-        assign dataflow_ready_in = buffer_out_ready_shifted;
-    end
+    // whole-beat valid; edge masking carried on wr_strb
+    assign wr_data           = cmp_active ? cmp_data_o : buffer_out;
+    assign wr_valid          = cmp_active ? {StrbWidth{cmp_out_valid}} : buffer_out_valid;
+    assign wr_strb           = cmp_active ? cmp_strb_o : '1;
+    // pop the buffer only on a compute input handshake
+    assign dataflow_ready_in = cmp_active ? {StrbWidth{(&buffer_out_valid) & cmp_in_ready}}
+                                          : buffer_out_ready_shifted;
+% else:
+    assign wr_data           = buffer_out;
+    assign wr_valid          = buffer_out_valid;
+    assign wr_strb           = '1;
+    assign dataflow_ready_in = buffer_out_ready_shifted;
+% endif
 
     //--------------------------------------
     // Write Barrel shifter

@@ -114,10 +114,10 @@ define idma_gen
 endef
 
 $(IDMA_RTL_DIR)/idma_transport_layer_%.sv: $(IDMA_GEN) $(IDMA_GEN_SRC) $(IDMA_ROOT)/src/backend/tpl/idma_transport_layer.sv.tpl $(IDMA_DB_FILES)
-	$(call idma_gen,transport,$(IDMA_ROOT)/src/backend/tpl/idma_transport_layer.sv.tpl,$(IDMA_DB_FILES),$*,,$@)
+	$(call idma_gen,transport,$(IDMA_ROOT)/src/backend/tpl/idma_transport_layer.sv.tpl,$(IDMA_DB_FILES),$*,,$@,$(IDMA_VIDMA_IDS))
 
 $(IDMA_RTL_DIR)/idma_legalizer_%.sv: $(IDMA_GEN) $(IDMA_GEN_SRC) $(IDMA_ROOT)/src/backend/tpl/idma_legalizer.sv.tpl $(IDMA_DB_FILES)
-	$(call idma_gen,legalizer,$(IDMA_ROOT)/src/backend/tpl/idma_legalizer.sv.tpl,$(IDMA_DB_FILES),$*,,$@)
+	$(call idma_gen,legalizer,$(IDMA_ROOT)/src/backend/tpl/idma_legalizer.sv.tpl,$(IDMA_DB_FILES),$*,,$@,$(IDMA_VIDMA_IDS))
 
 $(IDMA_RTL_DIR)/idma_backend_%.sv: $(IDMA_GEN) $(IDMA_GEN_SRC) $(IDMA_RTL_DIR)/idma_legalizer_%.sv $(IDMA_RTL_DIR)/idma_transport_layer_%.sv $(IDMA_ROOT)/src/backend/tpl/idma_backend.sv.tpl $(IDMA_DB_FILES)
 	$(call idma_gen,backend,$(IDMA_ROOT)/src/backend/tpl/idma_backend.sv.tpl,$(IDMA_DB_FILES),$*,,$@)

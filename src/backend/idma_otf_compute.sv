@@ -10,8 +10,8 @@
 module idma_otf_compute #(
   /// Byte lanes per beat (= DataWidth/8)
   parameter int unsigned StrbWidth       = 32'd8,
-  /// Compile in the transpose sub-unit
-  parameter bit          EnableTranspose = 1'b1
+  /// Compile-time per-op feature enables (value rendered by the generator)
+  parameter idma_pkg::compute_enable_t ComputeEnable = '0
 ) (
   input  logic clk_i,
   input  logic rst_ni,
@@ -45,7 +45,7 @@ module idma_otf_compute #(
   // per-op select
   logic sel_transpose;
   assign sel_transpose = eff_compute.enable &
-                         (eff_compute.op == idma_pkg::COMPUTE_TRANSPOSE) & EnableTranspose;
+                         (eff_compute.op == idma_pkg::COMPUTE_TRANSPOSE) & ComputeEnable.transpose;
 
   assign active_o = sel_transpose;
 
@@ -54,7 +54,7 @@ module idma_otf_compute #(
   logic [StrbWidth-1:0]      tp_strb;
   logic                      tp_valid, tp_in_ready;
 
-  if (EnableTranspose) begin : gen_transpose
+  if (ComputeEnable.transpose) begin : gen_transpose
     idma_otf_transpose #(
       .StrbWidth ( StrbWidth                     ),
       .DimWidth  ( idma_pkg::TransposeDimWidth   )
