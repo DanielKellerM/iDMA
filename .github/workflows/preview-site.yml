@@ -1,0 +1,60 @@
+# Copyright 2025 ETH Zurich and University of Bologna.
+# Licensed under the Apache License, Version 2.0, see LICENSE for details.
+# SPDX-License-Identifier: Apache-2.0
+
+# Authors:
+# - Daniel Keller <dankeller@iis.ee.ethz.ch>
+
+name: preview-site
+
+# Fork-only preview of the Starlight site (doc/site) on GitHub Pages.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      -
+        name: Checkout
+        uses: actions/checkout@v4
+      -
+        name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      -
+        name: Set base path for project Pages
+        run: |
+          sed -i "s|export default defineConfig({|export default defineConfig({\n  base: '/iDMA/',|" doc/site/astro.config.mjs
+      -
+        name: Build Starlight site
+        working-directory: doc/site
+        run: |
+          npm ci
+          npm run build
+      -
+        name: Setup Pages
+        uses: actions/configure-pages@v5
+      -
+        name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: doc/site/dist
+      -
+        name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
