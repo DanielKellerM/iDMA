@@ -9,6 +9,8 @@ name: preview-site
 
 # Fork-only preview of the Starlight site (doc/site) on GitHub Pages.
 on:
+  push:
+    branches: [ preview/docs-site ]
   workflow_dispatch:
 
 permissions:
