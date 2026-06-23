@@ -504,6 +504,15 @@ $(IDMA_VLT_DIR)/%_elab.log: $(IDMA_BENDER_FILES) $(IDMA_FULL_TB) $(IDMA_FULL_RTL
 idma_verilator_clean:
 	rm -rf $(IDMA_VLT_DIR)
 
+# inst64 frontend elaboration gate: bind the snitch_cluster-gated idma_inst64_top
+# to concrete types (test/idma_inst64_lint.sv) and verilator --lint-only it, so
+# public CI catches frontend port/param/elaboration errors. Run after idma_hw_all.
+.PHONY: idma_lint_inst64
+idma_lint_inst64:
+	mkdir -p $(IDMA_VLT_DIR)
+	$(BENDER) script verilator -t rtl -t snitch_cluster -t lint > $(IDMA_VLT_DIR)/idma_inst64_lint.f
+	$(VERILATOR) --lint-only -Wno-fatal --timing -f $(IDMA_VLT_DIR)/idma_inst64_lint.f --top-module idma_inst64_lint
+
 
 # ---------------
 # Trace
